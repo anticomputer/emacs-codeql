@@ -1,8 +1,6 @@
-;;; codeql.el --- a tree-sitter based ql major mode for emacs -*- lexical-binding: t -*-
+;;; ql-tree-sitter.el --- a tree-sitter based ql major mode for emacs -*- lexical-binding: t -*-
 
-;; this mode is packaged with codeql.el and not recommended for stand-alone use.
-
-;; see the codeql.el documentation for further details
+;; this mode is packaged with https://github.com/anticomputer/emacs-codeql
 
 (require 'cl-lib)
 (require 'cl-extra)
@@ -228,3 +226,5 @@
 (add-to-list 'auto-mode-alist '("\\.qll?\\'" . ql-tree-sitter-mode))
 
 (provide 'ql-tree-sitter)
+
+;;; ql-tree-sitter.el ends here
