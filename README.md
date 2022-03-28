@@ -27,6 +27,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
   - aggressive-indent
   - projectile
   - eglot
+- CodeQL CLI 2.8.3+ 
 
 ## Installation
 
@@ -46,7 +47,13 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
   :init
   (setq codeql-transient-binding "C-c q")
   (setq codeql-configure-eglot-lsp t)
-  (setq codeql-configure-projectile t))
+  (setq codeql-configure-projectile t)
+  :config
+  ;; where your codeql repos are. Note: keep the "./" entry
+  (setq codeql-search-paths 
+   '("~/codeql-home/codeql-repo/" 
+     "~/codeql-home/codeql-go" 
+     "./")))
 ```
 
 ### Alternative install method
@@ -60,7 +67,31 @@ Alternatively, you can clone this repository and place it into your emacs `load-
 (setq codeql-configure-projectile t)
 
 (require 'emacs-codeql)
+
+;; configuration
+
+;; where your codeql repos are. Note: keep the "./" entry
+(setq codeql-search-paths 
+  '("~/codeql-home/codeql-repo/" 
+    "~/codeql-home/codeql-go"
+    "./"))
 ```
+
+#### Configuring non-standard CodeQL search paths
+
+If you do not follow the standard `~/codeql-home/codeql-repo` conventions, you can customize the codeql search paths.
+
+```elisp
+(setq codeql-search-paths '("~/codeql-home/codeql-repo/" "~/codeql-home/codeql-go" "./"))
+```
+
+`codeql-repo` is a clone of https://github.com/github/codeql and `codeql-go` is a clone of https://github.com/github/codeql-go
+
+Note:
+
+You should keep "./" as part if your search path, as this will be relative to the project root of your current query project.
+
+Additionally, codeql cli is expected to exist in your `PATH`, you should follow the normal [codeql cli setup instructions](https://codeql.github.com/docs/codeql-cli/getting-started-with-the-codeql-cli/) to get the cli bootstrapped and add its location to your search `PATH`.
 
 ### If needed: build a custom tree-sitter QL artifact
 
