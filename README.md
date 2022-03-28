@@ -77,7 +77,7 @@ Alternatively, you can clone this repository and place it into your emacs `load-
     "./"))
 ```
 
-#### Configuring non-standard CodeQL search paths
+#### Configuring the CodeQL CLI
 
 If you do not follow the standard `~/codeql-home/codeql-repo` conventions, you can customize the codeql search paths.
 
@@ -85,13 +85,14 @@ If you do not follow the standard `~/codeql-home/codeql-repo` conventions, you c
 (setq codeql-search-paths '("~/codeql-home/codeql-repo/" "~/codeql-home/codeql-go" "./"))
 ```
 
-`codeql-repo` is a clone of https://github.com/github/codeql and `codeql-go` is a clone of https://github.com/github/codeql-go
+Note: You should keep "./" in `codeql-search-paths`. This entry will be buffer-local relative to the project root of your currently active query project.
 
-Note:
+`~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go` is a clone of https://github.com/github/codeql-go
 
-You should keep "./" as part if your search path, as this will be relative to the project root of your current query project.
 
-Additionally, codeql cli is expected to exist in your `PATH`, you should follow the normal [codeql cli setup instructions](https://codeql.github.com/docs/codeql-cli/getting-started-with-the-codeql-cli/) to get the cli bootstrapped and add its location to your search `PATH`.
+According to codeql cli conventions, these repositories are expected to be siblings of your codeql cli location, e.g. I keep the codeql cli in `~/codeql-home/codeql-cli`.
+
+`emacs-codeql` expects the codeql cli to exist in your `PATH`. Follow the standard [codeql cli setup instructions](https://codeql.github.com/docs/codeql-cli/getting-started-with-the-codeql-cli/) to get the cli bootstrapped and add its location to your executable search `PATH`.
 
 ### If needed: build a custom tree-sitter QL artifact
 
