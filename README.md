@@ -77,24 +77,24 @@ Alternatively, you can clone this repository and place it into your emacs `load-
     "./"))
 ```
 
-#### Configuring the CodeQL CLI
+### Configuring the CodeQL CLI
 
-If you do not follow the standard `~/codeql-home/codeql-repo` conventions, you can customize the codeql search paths.
+If you do not follow the standard `~/codeql-home/codeql-repo` conventions, you can customize the codeql search paths via `codeql-search-paths`.
 
 ```elisp
 (setq codeql-search-paths '("~/codeql-home/codeql-repo/" "~/codeql-home/codeql-go" "./"))
 ```
 
-Note: You should keep "./" in `codeql-search-paths`. This entry will be buffer-local relative to the project root of your currently active query project.
+Note: keep "./" in `codeql-search-paths`, this entry will be buffer-local relative to the project root of your currently active query project.
 
 `~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go` is a clone of https://github.com/github/codeql-go
-
 
 According to codeql cli conventions, these repositories are expected to be siblings of your codeql cli location, e.g. I keep the codeql cli in `~/codeql-home/codeql-cli`.
 
 `emacs-codeql` expects the codeql cli to exist in your `PATH`. Follow the standard [codeql cli setup instructions](https://codeql.github.com/docs/codeql-cli/getting-started-with-the-codeql-cli/) to get the cli bootstrapped and add its location to your executable search `PATH`.
 
-### If needed: build a custom tree-sitter QL artifact
+
+### Optional: build custom tree-sitter QL artifacts
 
 If this package does not contain the required `tree-sitter-langs` artifacts for your system, you may also need to install the following to be able to build the required QL `tree-sitter-langs` support for your system.
 
