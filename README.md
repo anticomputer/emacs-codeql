@@ -4,6 +4,12 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 
 ![screenshot](img/codeql-dot-el.png?raw=true "emacs-codeql")
 
+## Demo
+
+You can find an early feature demo below, note that it is probably out of sync with the current state of the project.
+
+[![emacs-codeql demo](https://img.youtube.com/vi/wP9fU9gVGS4/0.jpg)](https://www.youtube.com/watch?v=wP9fU9gVGS4)
+
 ## Features 
 
 - [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) based syntax highlighting and indentation for the CodeQL query language
