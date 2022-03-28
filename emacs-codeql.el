@@ -912,21 +912,20 @@ This applies to both normal evaluation and quick evaluation.")
                       (with-current-buffer parent-buffer
                         (codeql--node-to-org node))))
                     (suffix
-                     (let ((url (codeql--result-node-url node)))
-                       (if url
-                           (format "%s:%s:%s"
-                                   ;; set a custom description for this link
-                                   (with-current-buffer parent-buffer
-                                     (codeql--node-to-org node
-                                                          (file-name-nondirectory
-                                                           (codeql--uri-to-filename
-                                                            (json-pointer-get url "/uri")))))
-                                   ;; org links don't support column offsets
-                                   ;; so this is mostly just eye candy :P
-                                   (json-pointer-get url "/startLine")
-                                   (json-pointer-get url "/startColumn"))
-                         ;; get ahead, but don't say nothing.
-                         "")))
+                     (if-let ((url (codeql--result-node-url node)))
+                         (format "%s:%s:%s"
+                                 ;; set a custom description for this link
+                                 (with-current-buffer parent-buffer
+                                   (codeql--node-to-org node
+                                                        (file-name-nondirectory
+                                                         (codeql--uri-to-filename
+                                                          (json-pointer-get url "/uri")))))
+                                 ;; org links don't support column offsets
+                                 ;; so this is mostly just eye candy :P
+                                 (json-pointer-get url "/startLine")
+                                 (json-pointer-get url "/startColumn"))
+                       ;; get ahead, but don't say nothing.
+                       ""))
                     ;; do some basic ballpark alignment based on prefix label length
                     (align (- 40 (+ 5 (length (codeql--escape-org-description
                                                (codeql--result-node-label node)))))))
