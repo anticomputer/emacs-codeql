@@ -226,9 +226,9 @@ It is HIGHLY recommended to enable both eglot and projectile configurations, as 
 ## TODO
 
 - `emacs-codeql` does NOT yet provide xref and region annotation support for the database source code archive, however, this is underway and should be part of the first version.
-- `emacs-codeql` does NOT yet provide database upgrade support, however, this is underway and should be part of the first version.
+- `emacs-codeql` ~~does NOT yet provide database upgrade support, however, this is underway and should be part of the first version.~~ UPDATE: @adityasharad informs me that the current CodeQL engine will deal with database upgrades/downgrades automagically as long as you're not operating on very old databases
 - `emacs-codeql` does NOT yet provide an AST viewer, however, this is underway and should be a part of the first version.
-- `emacs-codeql` does NOT yet provide database creation support, use the codeql cli directly for this.
+- `emacs-codeql` does NOT yet provide database creation support, use the codeql cli directly for this. I'll likely provide projectile commands for codeql database creation out of a given project root for various languages in an upcoming version.
 
 ## Acknowledgements
 
