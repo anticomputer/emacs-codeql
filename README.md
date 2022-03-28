@@ -123,7 +123,7 @@ Create a project root containing a `qlpack.yml` QL pack definition and then crea
 
 NOTE: make sure that you enable the `projectile` configuration option if you intend to use LSP support via `eglot`, as `eglot` needs to send the project root as part of codeql langserver `workspaceFolders` initialization.
 
-For example, to start a Javascript query project, `projectroot/qlpack.yaml` could contain:
+For example, to start a Javascript query project, `projectroot/qlpack.yml` could contain:
 
 ```yaml
 ---
@@ -133,7 +133,7 @@ version: 0.0.1
 libraryPathDependencies: codeql/javascript-all
 ```
 
-See [QL packs](https://codeql.github.com/docs/codeql-cli/about-ql-packs/)) for additional information.
+See [CodeQL packs documentation](https://codeql.github.com/docs/codeql-cli/about-ql-packs/) for additional information.
 
 ### Query files
 
