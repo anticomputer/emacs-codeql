@@ -43,7 +43,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 		:files (:defaults "bin"))
   :after tree-sitter-langs
   :demand
-  :config
+  :init
   (setq codeql-transient-binding "C-c q")
   (setq codeql-configure-eglot-lsp t)
   (setq codeql-configure-projectile t))
@@ -54,10 +54,12 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 Alternatively, you can clone this repository and place it into your emacs `load-path`, you'll want to ensure that you have all required dependencies available, including the most recent MELPA version of eglot.
 
 ```elisp
-(require 'emacs-codeql)
+;; initialization options
 (setq codeql-transient-binding "C-c q")
 (setq codeql-configure-eglot-lsp t)
 (setq codeql-configure-projectile t)
+
+(require 'emacs-codeql)
 ```
 
 ### If needed: build a custom tree-sitter QL artifact
@@ -135,7 +137,7 @@ See [QL packs](https://codeql.github.com/docs/codeql-cli/about-ql-packs/)) for a
 
 ### Query files
 
-Edit a `.ql` or `.qll` file inside a `qlpack.yml` project root and run `M-x transient-query-server-interact` to open the `emacs-codeql` transient. This transient is bound to the value of `codeql-transient-binding`, which may be customized by the user by setting `codeql-transient-binding` to a keybinding of their liking.
+Edit a `.ql` or `.qll` file inside a `qlpack.yml` project root and run `M-x codeql-transient-query-server-interact` to open the `emacs-codeql` transient. This transient is bound to the value of `codeql-transient-binding` on initialization, which may be customized by the user by setting `codeql-transient-binding` to a keybinding of their liking.
 
 #### Syntax highlighting and indentation
 
@@ -146,6 +148,8 @@ Edit a `.ql` or `.qll` file inside a `qlpack.yml` project root and run `M-x tran
 `emacs-codeql` also packages QL `tree-sitter` artifacts for Linux x64 and MacOS x64 systems, which may preclude the need to build your own artifacts. If your system is compatible with the existing artifacts, you are not required to install the custom forks of `tree-sitter`, `tree-sitter-langs` and `tree-sitter-indent` and can just use the existing MELPA versions.
 
 ### Database selection
+
+You can register a database for your current project via `M-x codeql-transient-query-server-interact` and selecting `d` to register an active database. Ensure you have started a query server first by using `s` from the same menu. If a database is active in another query buffer, it will automatically be deregistered there and registered for your current buffer. If a database has been registered in the global emacs session before, you can fetch it more rapidly via selecting `k` for known database history.
 
 Database selection is buffer-local per query file and you can run as many concurrent query projects as you have resources available. Database history allows you to rapidly register/unregister databases that were seen across all sessions.
 
@@ -161,9 +165,9 @@ If there is no active region, `emacs-codeql` will attempt to run the full query 
 
 Results are rendered through `org-mode` buffers, which allows you to save results as normal text files and even read them in other editors. This approach also allows you to turn a result buffer into a living audit document, take notes, and do all the things that `org-mode` allows you to do.
 
-The following query "kinds" are supported: path-problem, problem, raw.
+The following query "kinds" are supported: `path-problem`, `problem`, and raw tuple results.
 
-kind: problem and path-propblem are rendered as org trees, raw tuple results are rendered as org tables.
+kind: `problem` and `path-problem` are rendered as org trees, raw tuple results are rendered as org tables.
 
 Results contain source code locations in the form of org links, which can be visited with the normal org mode operations for link handling (e.g. `org-open-at-point`)
 
