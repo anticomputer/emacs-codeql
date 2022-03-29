@@ -16,6 +16,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 - Buffer local query server state (concurrent project, database and query support)
 - Automatic database selection deconfliction
 - Org based rendering of path-problem, problem, and raw results
+- Remote query support (i.e. you can write+run queries over TRAMP on a remote server)
 
 ## Requirements
 
@@ -218,6 +219,12 @@ This interface is self-documenting and allows you to start/stop query servers, s
 
 Otherwise hidden features such as max path depths for path queries are unobtrusively surfaced to the user.
 
+## TRAMP support
+
+`emacs-codeql` is fully TRAMP compatible, which means you can edit a query file over TRAMP and as long as `emacs-codeql` can find, or is told where to find, the codeql cli installation on the remote end, everything will work just as if you were working locally. Yes, this means you can develop codeql queries without any locally installed dependencies from your emacs. Science.
+
+![screenshot](img/codeql-over-tramp.png?raw=true "emacs-codeql")
+
 ## Language Server Protocol
 
 `emacs-codeql` performs very well with `eglot`. Due to the codeql language server relying on `workspaceFolders` support, `eglot 20220326.2143` or newer is required from MELPA, which includes the basic project-root based `workspaceFolders` introduced in: https://github.com/joaotavora/eglot/commit/9eb9353fdc15c91a66ef8f4e53e18b22aa0870cd
@@ -228,11 +235,21 @@ It is HIGHLY recommended to enable both eglot and projectile configurations, as 
 
 `emacs-codeql` has not been tested in conjunction with `lsp-mode`.
 
+### LSP + TRAMP
+
+While the recommended LSP client, `eglot`, does function over TRAMP, running LSP over TRAMP can be very quirky and laggy, and slow initialization can be blocking for emacs. When operating in a TRAMP context, `emacs-codeql` will ask you if you want to enable the LSP client, unless you reaaaally want it, I recommend disabling it for remote editing and query debugging. 
+
+The codeql query server, while also running jsonrpc over stdio, is not tied to a direct editor feedback loop, so it is a much more pleasant experience over TRAMP, so all local functionality is enabled and available.
+
 ## Known Quirks
 
 ### The very first run of a newly created query file compiles but does not actually run
 
 You can re-run the query and it will execute fine on the second run and any subsequent runs against any other database. Seemingly on the very first run of a new query file the query server may not report success on compilation completion. This happens only for the first run of a newly created query file. I'm debugging this still, but it's a rare enough event to not cause too much friction. It also works fine across restarts of emacs and for any iterations on the actual contents of the query after the very first compilation.
+
+### Sometimes running a remote query over TRAMP gets "stuck"
+
+Currently `emacs-codeql` uses synchronous shell commands to invoke the codeql cli with various tasks, ranging from meta data gathering to result parsing. While these commands are generally short lived, and longer tasks such as query compilation and evaluation are handled by the query server asynchronously, on rare occasion one of the synchronous commands may block emacs, due to TRAMP quirks. This is known behavior, and I'm thinking about a more asynchronous design for the shell command handling. In practice this does not happen so frequently that it causes too much friction, but buyer beware.
 
 ## TODO
 

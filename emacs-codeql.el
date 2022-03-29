@@ -214,6 +214,9 @@
 
 emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 
+(defvar codeql-verbose-commands t
+  "Be verbose about which commands we're running at any given time.")
+
 (defvar codeql-configure-projectile t
   "Configure project by default.")
 
@@ -273,11 +276,49 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 
 (defun codeql--lang-server-contact (i)
   "Return the currently configured LSP server parameters."
+
+  (cl-assert codeql--cli-buffer-local t)
+
   (list codeql--cli-buffer-local
         "execute" "language-server"
         (format "--search-path=%s" (codeql--search-path))
         "--check-errors" "ON_CHANGE"
         "-q"))
+
+(defun codeql--buffer-local-init-hook ()
+  "Set up a codeql buffer context correctly."
+  ;; if we're in a remote context, make sure we know where the cli lives
+  (when (and (file-remote-p default-directory))
+    ;; initialize our results storage if need be
+    (codeql--init-state-dirs)
+    (if-let ((codeql-path (or (let ((remote-path (codeql--shell-command-to-string "which codeql")))
+                                (when remote-path
+                                  (message "Found codeql cli in remote path." remote-path)
+                                  (string-trim-right remote-path)))
+                              (read-file-name "Remote session! Need path to codeql cli bin: "
+                                              nil default-directory t))))
+        ;; now all codeql cli commands will also execute in the remote context
+        ;; just debugging the idea right now, maybe pass path via env var ??
+        ;; we need exec wrapper for notmuch
+        (progn
+          ;; for remotes sessions, we require the standard cli/repo sibling relationship
+          (setq codeql--search-paths-buffer-local
+                (append
+                 '("./")
+                 (cl-loop while (yes-or-no-p "Remote session! Set (another) search path? (not needed if cli is sibling to codeql repos)")
+                          collect
+                          (when-let ((path (file-local-name
+                                            (read-file-name "Path: " nil default-directory t))))
+                            (message "Added %s to search paths." path)
+                            path))))
+          (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path)))
+      (error "Can not start session in remote context without path to codeql cli.")))
+  ;; ensure we have the eglot LSP client setup
+  (when codeql-configure-eglot-lsp
+    (when (or (not (file-remote-p default-directory))
+              ;; XXX: set eglot timeout to a higher value pending this
+              (yes-or-no-p "Remote session! Do you want to use LSP remotely? Warning: this can be very slow!"))
+      (eglot-ensure))))
 
 ;; LSP configuration
 (when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
@@ -285,7 +326,8 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   ;; only configure eglot for codeql when we have the cli available in PATH
   (add-to-list 'eglot-server-programs
                `(ql-tree-sitter-mode . ,#'codeql--lang-server-contact))
-  (add-hook 'ql-tree-sitter-mode-hook #'eglot-ensure))
+
+  (add-hook 'ql-tree-sitter-mode-hook #'codeql--buffer-local-init-hook))
 
 ;; backup formatting utilities for when ql-tree-sitter is not available
 (defun codeql-format (&optional min max)
@@ -306,12 +348,46 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 (defvar codeql-results-dir (concat codeql-state-dir "/results"))
 (defvar codeql-tmp-dir (concat codeql-state-dir "/tmp"))
 
+;; helper functions to deal with tramp contexts
+
+(defun codeql--tramp-wrap (file)
+  "Wrap a tramp prefix onto file if in a remote context (if needed)."
+  (cond ((file-remote-p file)
+         file)
+        ((file-remote-p default-directory)
+         (let ((v (tramp-dissect-file-name default-directory)))
+           (format "/%s:%s@%s:%s"
+                   (tramp-file-name-method v)
+                   (tramp-file-name-user v)
+                   (tramp-file-name-host v)
+                   file)))
+        (t
+         file)))
+
+(defun codeql--tramp-unwrap (file)
+  "Strip the tramp prefix from a file if it's a remote file."
+  (cond
+   ((file-remote-p file)
+    (file-local-name file))
+   (t
+    file)))
+
+(defun codeql--file-truename (file)
+  (if (file-remote-p default-directory)
+      (codeql--tramp-unwrap file)
+    (file-truename file)))
+
+(defun codeql--file-exists-p (file)
+  (if (file-remote-p default-directory)
+      (tramp-handle-file-exists-p (codeql--tramp-wrap file))
+    (file-exists-p (codeql--tramp-unwrap file))))
+
 ;; init our storage locations
 (defun codeql--init-state-dirs ()
   "Create our various storage directories if they do not exist yet."
   (mapcar (lambda (path)
-            (unless (file-exists-p path)
-              (mkdir path t)))
+            (unless (codeql--file-exists-p path)
+              (mkdir (codeql--tramp-wrap path) t)))
           (list codeql-state-dir
                 codeql-results-dir
                 codeql-tmp-dir)))
@@ -441,22 +517,32 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 
 ;;; utility functions for running queries
 
+;; XXX: executes command synchronously, so if something gets stuck, it's blocking for emacs, move to async logic
 (defun codeql--shell-command-to-string (cmd &optional verbose)
   "A shell command to string that gives us explicit control over stderr."
-  (when verbose
-    (message "Running cmd: %s" cmd))
+  (when (or verbose codeql-verbose-commands)
+    (message "Running %s cmd: %s" (if (file-remote-p default-directory) "remote" "local") cmd))
+  ;; let tramp work its magic if we're in a remote context
   (with-temp-buffer
-    (let ((exit-code (apply 'call-process
-                            shell-file-name
-                            nil
-                            ;; redirect stderr here somewhere if we need to
-                            `(,(current-buffer) nil)
-                            nil
-                            shell-command-switch
-                            (list cmd))))
-      (when (eql exit-code 0)
-        ;; return stdout on success, nil otherwise
-        (buffer-string)))))
+    (let ((stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *")))
+      (if (file-remote-p default-directory)
+          ;; executing remotely over tramp
+          (progn
+            (let ((exit-code (shell-command cmd (current-buffer) stderr-buffer)))
+              (when (eql exit-code 0)
+                (buffer-string))))
+        ;; executing locally, we want more control over the process
+        (let ((exit-code (apply 'call-process
+                                shell-file-name
+                                nil
+                                ;; redirect stderr here somewhere if we need to
+                                `(,(current-buffer) nil)
+                                nil
+                                shell-command-switch
+                                (list cmd))))
+          (when (eql exit-code 0)
+            ;; return stdout on success, nil otherwise
+            (buffer-string)))))))
 
 (defun codeql--resolve-query-paths (query-path)
   "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH."
@@ -466,7 +552,8 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
     (message "Resolving query paths.")
     (let ((json (codeql--shell-command-to-string
                  (format "%s resolve library-path -v --log-to-stderr --format=json --additional-packs=%s --query=%s"
-                         codeql--cli-buffer-local (codeql--search-path) query-path))))
+                         codeql--cli-buffer-local (codeql--search-path)
+                         (codeql--tramp-unwrap query-path)))))
       (when json
         (cl-destructuring-bind (&key libraryPath dbscheme &allow-other-keys)
             (json-parse-string json :object-type 'plist)
@@ -480,7 +567,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let ((json (codeql--shell-command-to-string
                (format "%s resolve database -v --log-to-stderr --format=json -- %s"
-                       codeql--cli-buffer-local database-path))))
+                       codeql--cli-buffer-local (codeql--tramp-unwrap database-path)))))
     (when json
       (json-parse-string json :object-type 'alist))))
 
@@ -489,7 +576,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let ((json (codeql--shell-command-to-string
                (format "%s resolve upgrades -v --log-to-stderr --format=json -- %s"
-                       codeql--cli-buffer-local database-scheme))))
+                       codeql--cli-buffer-local (codeql--tramp-unwrap database-scheme)))))
     (when json
       (json-parse-string json :object-type 'alist))))
 
@@ -498,7 +585,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let ((json (codeql--shell-command-to-string
                (format "%s resolve metadata -v --log-to-stderr --format=json -- %s"
-                       codeql--cli-buffer-local query-path))))
+                       codeql--cli-buffer-local (codeql--tramp-unwrap query-path)))))
     (when json
       (json-parse-string json :object-type 'alist))))
 
@@ -507,7 +594,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let ((json (codeql--shell-command-to-string
                (format "%s bqrs info -v --log-to-stderr --format=json -- %s"
-                       codeql--cli-buffer-local bqrs-path))))
+                       codeql--cli-buffer-local (codeql--tramp-unwrap bqrs-path)))))
     (when json
       (json-parse-string json :object-type 'alist))))
 
@@ -515,14 +602,16 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (let ((csv-file (concat bqrs-path ".csv")))
     (when (codeql--shell-command-to-string
            (format "%s bqrs decode --output=%s --format=csv --entities=%s -- %s"
-                   codeql--cli-buffer-local csv-file entities bqrs-path))
+                   codeql--cli-buffer-local
+                   (codeql--tramp-unwrap csv-file) entities (codeql--tramp-unwrap bqrs-path)))
       (with-temp-buffer (insert-file-contents csv-file) (buffer-string)))))
 
 (defun codeql--bqrs-to-json (bqrs-path entities)
   (let ((json-file (concat bqrs-path ".json")))
     (when (codeql--shell-command-to-string
            (format "%s bqrs decode --output=%s --format=json --entities=%s -- %s"
-                   codeql--cli-buffer-local json-file entities bqrs-path))
+                   codeql--cli-buffer-local
+                   (codeql--tramp-unwrap json-file) entities (codeql--tramp-unwrap bqrs-path)))
       (with-temp-buffer (insert-file-contents json-file) (buffer-string)))))
 
 (defvar-local codeql--path-problem-max-paths 10)
@@ -532,7 +621,9 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (let ((sarif-file (concat bqrs-path ".sarif")))
     (when (codeql--shell-command-to-string
            (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s -- %s"
-                   codeql--cli-buffer-local id kind sarif-file (or max-paths codeql--path-problem-max-paths) bqrs-path))
+                   codeql--cli-buffer-local id kind
+                   (codeql--tramp-unwrap sarif-file) (or max-paths codeql--path-problem-max-paths)
+                   (codeql--tramp-unwrap bqrs-path)))
       (with-temp-buffer (insert-file-contents sarif-file) (buffer-string)))))
 
 (defun codeql--database-archive-zipinfo ()
@@ -546,9 +637,11 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 
 (defun codeql--database-extract-source-archive-zip (trusted-root)
   "Return extraction-relative file listing for source archive zip."
-  (if (and (not (file-exists-p (file-truename codeql--database-source-archive-root)))
-           (eql (string-match trusted-root (file-truename codeql--database-source-archive-root)) 0))
-      (progn
+  (message "archive-root: %s" (codeql--file-truename codeql--database-source-archive-root))
+  (message "trusted-root: %s" (codeql--file-truename trusted-root))
+  (if (not (codeql--file-exists-p (codeql--file-truename codeql--database-source-archive-root)))
+      (when (eql (string-match (codeql--file-truename trusted-root)
+                               (codeql--file-truename codeql--database-source-archive-root)) 0)
         ;; XXX: double check a malicious zip can't traverse out.
         ;; XXX: double check codeql--database-source-archive-root for traversals.
         ;; XXX: are malicious databases part of our threat model? decide.
@@ -556,8 +649,8 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
         (codeql--shell-command-to-string
          (format "%s %s -d %s"
                  (executable-find "unzip")
-                 (file-truename codeql--database-source-archive-zip)
-                 (file-truename codeql--database-source-archive-root))))
+                 (codeql--file-truename codeql--database-source-archive-zip)
+                 (codeql--file-truename codeql--database-source-archive-root))))
     (message "Source archive already extracted.")
     t))
 
@@ -598,6 +691,16 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
       ;; errr ... it's late
       (split-string (string-trim-right options) "\n"))))
 
+;; workaround from eglot.el, disable line buffering if in remote context
+(defun codeql--query-server-cmd (contact)
+  "Helper for codeql query server connection."
+  (if (file-remote-p default-directory)
+      (list "sh" "-c"
+            (string-join (cons "stty raw > /dev/null;"
+                               (mapcar #'shell-quote-argument contact))
+                         " "))
+    contact))
+
 (transient-define-suffix codeql-transient-query-server-start ()
   "Start a CodeQL query server."
   :description "start"
@@ -612,8 +715,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
                  (codeql--query-server-resolve-ram codeql--query-server-max-ram)
                  '("--require-db-registration"))))
       ;; spawn the server process
-      (let* ((default-directory default-directory)
-             (name (format "CODEQL Query Server (%s -> %s)"
+      (let* ((name (format "CODEQL Query Server (%s -> %s)"
                            ;; show query file name for this server if available
                            (file-name-base (directory-file-name default-directory))
                            (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
@@ -623,14 +725,20 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
         (setq codeql--query-server
               (make-instance
                'jsonrpc-process-connection
-               :process (make-process
-                         :name name
-                         :command cmd
-                         :connection-type 'pipe
-                         :coding 'utf-8-emacs-unix
-                         :noquery t
-                         :stderr (get-buffer-create (format "*%s stderr*" name))
-                         :file-handler nil)
+               :process
+               ;; spawn in the remote context if need be
+               (let* ((default-directory default-directory)
+                      (cmd (codeql--query-server-cmd cmd)))
+                 (message "Starting query server with: %s" cmd)
+                 (make-process
+                  :name name
+                  :command cmd
+                  :connection-type 'pipe
+                  :coding 'utf-8-emacs-unix
+                  :noquery t
+                  :stderr (get-buffer-create (format "*%s stderr*" name))
+                  ;; enable tramp contexts
+                  :file-handler t))
                :name name
                :events-buffer-scrollback-size codeql-query-server-events-buffer-size
                :notification-dispatcher #'codeql--query-server-handle-notification
@@ -898,13 +1006,13 @@ This applies to both normal evaluation and quick evaluation.")
   (if (codeql--result-node-visitable node)
       (progn
         (cl-assert codeql--database-source-archive-zip t)
-        (cl-assert (file-exists-p codeql--database-source-archive-root) t)
+        (cl-assert (codeql--file-exists-p codeql--database-source-archive-root) t)
         (let ((filename (codeql--result-node-filename node)))
           ;; XXX: to alert on any wacky file schemes we might need to support
           (when filename (cl-assert (not (string-match ":" filename)))))
         (let ((link (format "file:%s/%s::%s"
                             ;; we've extracted to the expected location
-                            codeql--database-source-archive-root
+                            (codeql--tramp-wrap codeql--database-source-archive-root)
                             (codeql--result-node-filename node)
                             (codeql--result-node-line node)))
               (desc (codeql--result-node-label node)))
@@ -1425,10 +1533,10 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
   (if codeql--query-server
       (let* ((query-path (buffer-file-name))
              (qlo-path
-              (let ((temporary-file-directory codeql-tmp-dir))
+              (let ((temporary-file-directory (codeql--tramp-wrap codeql-tmp-dir)))
                 (make-temp-file "qlo" nil ".qlo")))
              (bqrs-path
-              (let ((temporary-file-directory codeql-results-dir))
+              (let ((temporary-file-directory (codeql--tramp-wrap codeql-results-dir)))
                 (make-temp-file "bqrs" nil ".bqrs")))
              (library-path codeql--library-path)
              (dbscheme codeql--dbscheme)
@@ -1456,7 +1564,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                           (
                            :quickEvalPos
                            (
-                            :fileName ,query-path
+                            :fileName ,(codeql--tramp-unwrap query-path)
                             :line ,start-line
                             :column ,start-col
                             :endLine ,end-line
@@ -1485,8 +1593,8 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                    (
                     :libraryPath ,library-path
                     :dbschemePath ,dbscheme
-                    :queryPath ,query-path)
-                   :resultPath ,qlo-path
+                    :queryPath ,(codeql--tramp-unwrap query-path))
+                   :resultPath ,(codeql--tramp-unwrap qlo-path)
                    :target ,target)
                   :progressId ,(codeql--query-server-next-progress-id)))
                (run-query-params
@@ -1499,8 +1607,8 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                    :evaluateId ,(codeql--query-server-next-evaluate-id)
                    :queries
                    (
-                    :resultsPath ,bqrs-path
-                    :qlo ,(format "file:%s" qlo-path)
+                    :resultsPath ,(codeql--tramp-unwrap bqrs-path)
+                    :qlo ,(format "file:%s" (codeql--tramp-unwrap qlo-path))
                     :allowUnknownTemplates t
                     ;; XXX: figure out how to set templateValues properly
                     ;; XXX: we need these that we can run templated queries
