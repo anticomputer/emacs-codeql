@@ -16,7 +16,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 - Buffer local query server state (concurrent project, database and query support)
 - Automatic database selection deconfliction
 - Org based rendering of path-problem, problem, and raw results
-- Remote query support (i.e. you can write+run queries over TRAMP on a remote server)
+- Remote query development + evaluation via TRAMP
 
 ## Requirements
 
