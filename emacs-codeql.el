@@ -227,7 +227,10 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   "The scrollback size for query server event buffers.")
 
 (defvar codeql-state-dir "~/.config/codeql/emacs"
-  "Base directory for codeql emacs state maintenance.")
+  "Base directory for codeql emacs state maintenance.
+
+It is important to keep this as a ~/relative path so that it will resolve both
+in local and remote contexts to something that readily exists.")
 
 (defvar codeql-cli (executable-find "codeql")
   "Path to codeql-cli")
