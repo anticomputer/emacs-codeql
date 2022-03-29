@@ -185,8 +185,6 @@
 
 ;; not part of emacs
 (require 'transient)
-(require 'projectile)
-(require 'eglot)
 
 ;;; place our artifacts if they don't exist yet (very hacky!)
 (when t
@@ -258,6 +256,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 
 ;; Projectile configuration
 (when codeql-configure-projectile
+  (require 'projectile)
   ;; use projectile for project root management
   (projectile-register-project-type
    'ql '("qlpack.yml")
@@ -268,17 +267,20 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
    ;; :test-suffix ""
    :project-file "qlpack.yml"))
 
+(defun codeql--lang-server-contact (i)
+  "Return the currently configured LSP server parameters."
+  (list codeql-cli
+        "execute" "language-server"
+        (format "--search-path=%s" (codeql--search-path))
+        "--check-errors" "ON_CHANGE"
+        "-q"))
+
 ;; LSP configuration
 (when (and codeql-cli codeql-configure-eglot-lsp)
   (require 'eglot)
   ;; only configure eglot for codeql when we have the cli available in PATH
   (add-to-list 'eglot-server-programs
-               `((ql-tree-sitter-mode) .
-                 (,codeql-cli
-                  "execute" "language-server"
-                  ,(format "--search-path=%s" (codeql--search-path))
-                  "--check-errors" "ON_CHANGE"
-                  "-q")))
+               `(ql-tree-sitter-mode . ,#'codeql--lang-server-contact))
   (add-hook 'ql-tree-sitter-mode-hook #'eglot-ensure))
 
 ;; backup formatting utilities for when ql-tree-sitter is not available
