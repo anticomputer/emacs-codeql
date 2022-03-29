@@ -235,12 +235,16 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
         "./")
   "codeql cli library search paths.")
 
+;; we use buffer-local copies of these so we can play context dependent tricks
+(defvar-local codeql--cli-buffer-local codeql-cli)
+(defvar-local codeql--search-paths-buffer-local codeql-search-paths)
+
 (defvar codeql-max-raw-results 2000
   "The max amount of raw result tuples to render in an org-table.")
 
 (defun codeql--search-path ()
   "Return the user configured codeql cli search paths."
-  (mapconcat #'identity codeql-search-paths ":"))
+  (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
 ;; cache version info for CodeQL CLI
 (defvar codeql--cli-info nil
@@ -248,8 +252,8 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 
 (defun codeql-cli-version-cache-init ()
   (interactive)
-  (when codeql-cli
-    (setq codeql--cli-info (shell-command-to-string (format "%s version" codeql-cli)))))
+  (when codeql--cli-buffer-local
+    (setq codeql--cli-info (shell-command-to-string (format "%s version" codeql--cli-buffer-local)))))
 
 ;; re-run this anytime you upgrade the cli without restarting emacs
 (codeql-cli-version-cache-init)
@@ -269,14 +273,14 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 
 (defun codeql--lang-server-contact (i)
   "Return the currently configured LSP server parameters."
-  (list codeql-cli
+  (list codeql--cli-buffer-local
         "execute" "language-server"
         (format "--search-path=%s" (codeql--search-path))
         "--check-errors" "ON_CHANGE"
         "-q"))
 
 ;; LSP configuration
-(when (and codeql-cli codeql-configure-eglot-lsp)
+(when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
   (require 'eglot)
   ;; only configure eglot for codeql when we have the cli available in PATH
   (add-to-list 'eglot-server-programs
@@ -290,7 +294,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (shell-command-on-region
    (if min min (point-min))
    (if max max (point-max))
-   (format "%s query format --no-syntax-errors -- -" codeql-cli) t t))
+   (format "%s query format --no-syntax-errors -- -" codeql--cli-buffer-local) t t))
 
 (defun codeql-format-region (min max)
   "Format the current CodeQL region if active, or entire buffer if not."
@@ -462,7 +466,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
     (message "Resolving query paths.")
     (let ((json (codeql--shell-command-to-string
                  (format "%s resolve library-path -v --log-to-stderr --format=json --additional-packs=%s --query=%s"
-                         codeql-cli (codeql--search-path) query-path))))
+                         codeql--cli-buffer-local (codeql--search-path) query-path))))
       (when json
         (cl-destructuring-bind (&key libraryPath dbscheme &allow-other-keys)
             (json-parse-string json :object-type 'plist)
@@ -476,7 +480,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let ((json (codeql--shell-command-to-string
                (format "%s resolve database -v --log-to-stderr --format=json -- %s"
-                       codeql-cli database-path))))
+                       codeql--cli-buffer-local database-path))))
     (when json
       (json-parse-string json :object-type 'alist))))
 
@@ -485,7 +489,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let ((json (codeql--shell-command-to-string
                (format "%s resolve upgrades -v --log-to-stderr --format=json -- %s"
-                       codeql-cli database-scheme))))
+                       codeql--cli-buffer-local database-scheme))))
     (when json
       (json-parse-string json :object-type 'alist))))
 
@@ -494,7 +498,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let ((json (codeql--shell-command-to-string
                (format "%s resolve metadata -v --log-to-stderr --format=json -- %s"
-                       codeql-cli query-path))))
+                       codeql--cli-buffer-local query-path))))
     (when json
       (json-parse-string json :object-type 'alist))))
 
@@ -503,7 +507,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let ((json (codeql--shell-command-to-string
                (format "%s bqrs info -v --log-to-stderr --format=json -- %s"
-                       codeql-cli bqrs-path))))
+                       codeql--cli-buffer-local bqrs-path))))
     (when json
       (json-parse-string json :object-type 'alist))))
 
@@ -511,14 +515,14 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (let ((csv-file (concat bqrs-path ".csv")))
     (when (codeql--shell-command-to-string
            (format "%s bqrs decode --output=%s --format=csv --entities=%s -- %s"
-                   codeql-cli csv-file entities bqrs-path))
+                   codeql--cli-buffer-local csv-file entities bqrs-path))
       (with-temp-buffer (insert-file-contents csv-file) (buffer-string)))))
 
 (defun codeql--bqrs-to-json (bqrs-path entities)
   (let ((json-file (concat bqrs-path ".json")))
     (when (codeql--shell-command-to-string
            (format "%s bqrs decode --output=%s --format=json --entities=%s -- %s"
-                   codeql-cli json-file entities bqrs-path))
+                   codeql--cli-buffer-local json-file entities bqrs-path))
       (with-temp-buffer (insert-file-contents json-file) (buffer-string)))))
 
 (defvar-local codeql--path-problem-max-paths 10)
@@ -528,7 +532,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   (let ((sarif-file (concat bqrs-path ".sarif")))
     (when (codeql--shell-command-to-string
            (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s -- %s"
-                   codeql-cli id kind sarif-file (or max-paths codeql--path-problem-max-paths) bqrs-path))
+                   codeql--cli-buffer-local id kind sarif-file (or max-paths codeql--path-problem-max-paths) bqrs-path))
       (with-temp-buffer (insert-file-contents sarif-file) (buffer-string)))))
 
 (defun codeql--database-archive-zipinfo ()
@@ -589,7 +593,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 (defun codeql--query-server-resolve-ram (&optional max-ram)
   "Resolve ram options for jvm, optionally bounding to MAX-RAM in MB."
   (let* ((max-ram (if max-ram (format "-M=%s" max-ram) ""))
-         (options (codeql--shell-command-to-string (format "%s resolve ram %s --" codeql-cli max-ram))))
+         (options (codeql--shell-command-to-string (format "%s resolve ram %s --" codeql--cli-buffer-local max-ram))))
     (when options
       ;; errr ... it's late
       (split-string (string-trim-right options) "\n"))))
@@ -613,7 +617,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
                            ;; show query file name for this server if available
                            (file-name-base (directory-file-name default-directory))
                            (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
-             (cmd (append (list codeql-cli "execute" "query-server") args)))
+             (cmd (append (list codeql--cli-buffer-local "execute" "query-server") args)))
         (message "Starting query server.")
         ;; manage these buffer local
         (setq codeql--query-server
