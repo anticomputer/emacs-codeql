@@ -228,6 +228,12 @@ It is HIGHLY recommended to enable both eglot and projectile configurations, as 
 
 `emacs-codeql` has not been tested in conjunction with `lsp-mode`.
 
+## Known Quirks
+
+* The first run of a new query against a database compiles but does not actually run
+
+You can re-run the query and it will execute fine on the second run and any subsequent runs for that database. Seemingly on the very first run of a new query against a fresh database the query server does not report success on compilation completion, but this happens only for the first run for a new database. I'm debugging this still, but it's a rare enough event to not cause too much friction.
+
 ## TODO
 
 - `emacs-codeql` does NOT yet provide xref and region annotation support for the database source code archive, however, this is underway and should be part of the first version.
