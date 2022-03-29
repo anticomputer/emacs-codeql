@@ -214,7 +214,7 @@
 
 emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 
-(defvar codeql-verbose-commands t
+(defvar codeql-verbose-commands nil
   "Be verbose about which commands we're running at any given time.")
 
 (defvar codeql-configure-projectile t
@@ -288,21 +288,27 @@ in local and remote contexts to something that readily exists.")
         "--check-errors" "ON_CHANGE"
         "-q"))
 
+;; LSP configuration
+(when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
+  (require 'eglot)
+
+  ;; only configure eglot for codeql when we have the cli available in PATH
+  (add-to-list 'eglot-server-programs
+               `(ql-tree-sitter-mode . ,#'codeql--lang-server-contact)))
+
 (defun codeql--buffer-local-init-hook ()
   "Set up a codeql buffer context correctly."
+  ;; ensure we have somewhere to store result data in both local and remote contexts
+  (codeql--init-state-dirs) ;; XXX: this will only create if the dirs dont exist
   ;; if we're in a remote context, make sure we know where the cli lives
   (when (and (file-remote-p default-directory))
     ;; initialize our results storage if need be
-    (codeql--init-state-dirs)
     (if-let ((codeql-path (or (let ((remote-path (codeql--shell-command-to-string "which codeql")))
                                 (when remote-path
                                   (message "Found codeql cli in remote path." remote-path)
                                   (string-trim-right remote-path)))
                               (read-file-name "Remote session! Need path to codeql cli bin: "
                                               nil default-directory t))))
-        ;; now all codeql cli commands will also execute in the remote context
-        ;; just debugging the idea right now, maybe pass path via env var ??
-        ;; we need exec wrapper for notmuch
         (progn
           ;; for remotes sessions, we require the standard cli/repo sibling relationship
           (setq codeql--search-paths-buffer-local
@@ -314,23 +320,18 @@ in local and remote contexts to something that readily exists.")
                                             (read-file-name "Path: " nil default-directory t))))
                             (message "Added %s to search paths." path)
                             path))))
+          ;; all codeql cli commands will also execute in the remote context
           (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path)))
       (error "Can not start session in remote context without path to codeql cli.")))
   ;; ensure we have the eglot LSP client setup
-  (when codeql-configure-eglot-lsp
+  (when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
     (when (or (not (file-remote-p default-directory))
               ;; XXX: set eglot timeout to a higher value pending this
               (yes-or-no-p "Remote session! Do you want to use LSP remotely? Warning: this can be very slow!"))
       (eglot-ensure))))
 
-;; LSP configuration
-(when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
-  (require 'eglot)
-  ;; only configure eglot for codeql when we have the cli available in PATH
-  (add-to-list 'eglot-server-programs
-               `(ql-tree-sitter-mode . ,#'codeql--lang-server-contact))
-
-  (add-hook 'ql-tree-sitter-mode-hook #'codeql--buffer-local-init-hook))
+;; add a hook that sets up all the things we need to be available in the buffer-local context
+(add-hook 'ql-tree-sitter-mode-hook #'codeql--buffer-local-init-hook)
 
 ;; backup formatting utilities for when ql-tree-sitter is not available
 (defun codeql-format (&optional min max)
@@ -394,8 +395,6 @@ in local and remote contexts to something that readily exists.")
           (list codeql-state-dir
                 codeql-results-dir
                 codeql-tmp-dir)))
-
-(codeql--init-state-dirs)
 
 ;;; request and notification handling
 
@@ -521,31 +520,42 @@ in local and remote contexts to something that readily exists.")
 ;;; utility functions for running queries
 
 ;; XXX: executes command synchronously, so if something gets stuck, it's blocking for emacs, move to async logic
-(defun codeql--shell-command-to-string (cmd &optional verbose)
-  "A shell command to string that gives us explicit control over stderr."
+(defun codeql--shell-command-to-string (cmd &optional verbose keep-stdout)
+  "A shell command to string that gives us explicit control over stdout and stderr."
   (when (or verbose codeql-verbose-commands)
     (message "Running %s cmd: %s" (if (file-remote-p default-directory) "remote" "local") cmd))
   ;; let tramp work its magic if we're in a remote context
-  (with-temp-buffer
-    (let ((stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *")))
-      (if (file-remote-p default-directory)
-          ;; executing remotely over tramp
-          (progn
-            (let ((exit-code (shell-command cmd (current-buffer) stderr-buffer)))
-              (when (eql exit-code 0)
-                (buffer-string))))
-        ;; executing locally, we want more control over the process
-        (let ((exit-code (apply 'call-process
-                                shell-file-name
-                                nil
-                                ;; redirect stderr here somewhere if we need to
-                                `(,(current-buffer) nil)
-                                nil
-                                shell-command-switch
-                                (list cmd))))
-          (when (eql exit-code 0)
-            ;; return stdout on success, nil otherwise
-            (buffer-string)))))))
+  ;; create explicit buffers while we're debugging this crud still
+  (let ((stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
+        (stdout-buffer (generate-new-buffer "* codeql--shell-command-to-string stdout *")))
+    (if (file-remote-p default-directory)
+        ;; executing remotely over tramp
+        (progn
+          (setq tramp-verbose 6)
+          (let ((exit-code (shell-command cmd stdout-buffer stderr-buffer)))
+            (when (eql exit-code 0)
+              (let ((stdout-data
+                     (with-current-buffer stdout-buffer (buffer-string))))
+                (unless keep-stdout
+                  ;;(message "XXX: stdout: %s" stdout-data)
+                  (kill-buffer stdout-buffer))
+                stdout-data))))
+      ;; executing locally, we want more control over the process
+      (let ((exit-code (apply 'call-process
+                              shell-file-name
+                              nil
+                              ;; redirect stderr here somewhere if we need to
+                              `(,stdout-buffer nil)
+                              nil
+                              shell-command-switch
+                              (list cmd))))
+        (when (eql exit-code 0)
+          ;; return stdout on success, nil otherwise
+          (let ((stdout-data
+                 (with-current-buffer stdout-buffer (buffer-string))))
+            (unless keep-stdout
+              (kill-buffer stdout-buffer))
+            stdout-data))))))
 
 (defun codeql--resolve-query-paths (query-path)
   "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH."
