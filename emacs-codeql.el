@@ -531,7 +531,7 @@ in local and remote contexts to something that readily exists.")
     (if (file-remote-p default-directory)
         ;; executing remotely over tramp
         (progn
-          (setq tramp-verbose 6)
+          ;;(setq tramp-verbose 6)
           (let ((exit-code (shell-command cmd stdout-buffer stderr-buffer)))
             (when (eql exit-code 0)
               (let ((stdout-data
