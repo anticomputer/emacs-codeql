@@ -231,9 +231,10 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
 (defvar codeql-cli (executable-find "codeql")
   "Path to codeql-cli")
 
-(defvar codeql-search-paths '("~/codeql-home/codeql-repo/"
-                              "~/codeql-home/codeql-go"
-                              "./")
+(defvar codeql-search-paths
+  (list (expand-file-name "~/codeql-home/codeql-repo/")
+        (expand-file-name "~/codeql-home/codeql-go")
+        "./")
   "codeql cli library search paths.")
 
 (defun codeql--search-path ()

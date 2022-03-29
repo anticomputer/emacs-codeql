@@ -50,10 +50,10 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
   (setq codeql-configure-projectile t)
   :config
   ;; where your codeql repos are. Note: keep the "./" entry
-  (setq codeql-search-paths 
-   '("~/codeql-home/codeql-repo/" 
-     "~/codeql-home/codeql-go" 
-     "./")))
+  (setq codeql-search-paths
+      (list (expand-file-name "~/codeql-home/codeql-repo/")
+            (expand-file-name "~/codeql-home/codeql-go")
+            "./")))
 ```
 
 ### Alternative install method
@@ -71,10 +71,10 @@ Alternatively, you can clone this repository and place it into your emacs `load-
 ;; configuration
 
 ;; where your codeql repos are. Note: keep the "./" entry
-(setq codeql-search-paths 
-  '("~/codeql-home/codeql-repo/" 
-    "~/codeql-home/codeql-go"
-    "./"))
+(setq codeql-search-paths
+      (list (expand-file-name "~/codeql-home/codeql-repo/")
+            (expand-file-name "~/codeql-home/codeql-go")
+            "./"))
 ```
 
 ### Configuring the CodeQL CLI
@@ -82,8 +82,13 @@ Alternatively, you can clone this repository and place it into your emacs `load-
 If you do not follow the standard `~/codeql-home/codeql-repo` conventions, you can customize the codeql search paths via `codeql-search-paths`.
 
 ```elisp
-(setq codeql-search-paths '("~/codeql-home/codeql-repo/" "~/codeql-home/codeql-go" "./"))
+(setq codeql-search-paths
+      (list (expand-file-name "~/codeql-home/codeql-repo/")
+            (expand-file-name "~/codeql-home/codeql-go")
+            "./"))
 ```
+
+IMPORTANT: CodeQL expects full paths for its search paths, so use `expand-file-name` when providing `~/` relative paths.
 
 Note: keep "./" in `codeql-search-paths`, this entry will be buffer-local relative to the project root of your currently active query project.
 
