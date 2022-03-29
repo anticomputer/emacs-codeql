@@ -256,6 +256,10 @@ You can re-run the query and it will execute fine on the second run and any subs
 
 Currently `emacs-codeql` uses synchronous shell commands to invoke the codeql cli with various tasks, ranging from meta data gathering to result parsing. While these commands are generally short lived, and longer tasks such as query compilation and evaluation are handled by the query server asynchronously, on rare occasion one of the synchronous commands may block emacs, due to TRAMP quirks. This is known behavior, and I'm thinking about a more asynchronous design for the shell command handling. In practice this does not happen so frequently that it causes too much friction, but buyer beware.
 
+### TRAMP sometimes returns unexpected data in buffers
+
+The code has some re-entrancy issues currently which makes the TRAMP support a little flaky if you're spamming a ton of operations in sequence. I'm working on resolving these for a more stable experience, as well as looking into how to improve the LSP experience over TRAMP as well.
+
 ## TODO
 
 - `emacs-codeql` does NOT yet provide xref and region annotation support for the database source code archive, however, this is underway and should be part of the first version.
