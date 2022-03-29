@@ -232,10 +232,13 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
   "Path to codeql-cli")
 
 (defvar codeql-search-paths
-  (list (expand-file-name "~/codeql-home/codeql-repo/")
+  (list (expand-file-name "~/codeql-home/codeql-repo")
         (expand-file-name "~/codeql-home/codeql-go")
         "./")
   "codeql cli library search paths.")
+
+(defvar codeql-max-raw-results 2000
+  "The max amount of raw result tuples to render in an org-table.")
 
 (defun codeql--search-path ()
   "Return the user configured codeql cli search paths."
@@ -854,21 +857,28 @@ This applies to both normal evaluation and quick evaluation.")
   (with-temp-buffer
     (insert csv-data)
     (org-mode)
-    (org-table-convert-region (point-min) (point-max) '(4))
-    ;; seal off the top
-    (goto-char (point-min))
-    (when set-header-line
-      (save-excursion
-        ;; as below
-        (org-table-insert-hline)))
-    ;; so above
-    (org-table-insert-hline t)
-    ;; seal off the bottom
-    (goto-char (point-max))
-    (insert "|-")
-    (goto-char (point-min))
-    (org-table-align)
-    (buffer-string)))
+    (condition-case nil
+        (let ((org-table-convert-region-max-lines
+               codeql-max-raw-results))
+          (org-table-convert-region (point-min) (point-max) '(4))
+          ;; seal off the top
+          (goto-char (point-min))
+          (when set-header-line
+            (save-excursion
+              ;; as below
+              (org-table-insert-hline)))
+          ;; so above
+          (org-table-insert-hline t)
+          ;; seal off the bottom
+          (goto-char (point-max))
+          (insert "|-")
+          (goto-char (point-min))
+          (org-table-align)
+          (buffer-string))
+      (error
+       (progn
+         (message "Rendering failed (too many results?) Returning raw CSV.")
+         (buffer-string))))))
 
 (defun codeql--escape-org-description (description)
   "Replace org-link special with something harmless."
