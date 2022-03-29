@@ -230,9 +230,9 @@ It is HIGHLY recommended to enable both eglot and projectile configurations, as 
 
 ## Known Quirks
 
-### The first run of a new query against a database compiles but does not actually run
+### The very first run of a newly created query file compiles but does not actually run
 
-You can re-run the query and it will execute fine on the second run and any subsequent runs for that database. Seemingly on the very first run of a new query against a fresh database the query server does not report success on compilation completion, but this happens only for the first run for a new database. I'm debugging this still, but it's a rare enough event to not cause too much friction.
+You can re-run the query and it will execute fine on the second run and any subsequent runs against any other database. Seemingly on the very first run of a new query file the query server may not report success on compilation completion. This happens only for the first run of a newly created query file. I'm debugging this still, but it's a rare enough event to not cause too much friction. It also works fine across restarts of emacs and for any iterations on the actual contents of the query after the very first compilation.
 
 ## TODO
 
