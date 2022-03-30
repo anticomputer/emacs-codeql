@@ -206,7 +206,7 @@
 
 ;;; global user configuration options (XXX: move to defcustom)
 
-(defvar codeql-transient-binding "C-c q"
+(defvar codeql-transient-binding "C-c C-d"
   "The keybinding to start the emacs-codeql transient ui inside ql-tree-sitter-mode.")
 
 (defvar codeql-configure-eglot-lsp t
@@ -252,17 +252,14 @@ in local and remote contexts to something that readily exists.")
   "Return the user configured codeql cli search paths."
   (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
-;; cache version info for CodeQL CLI
-(defvar codeql--cli-info nil
-  "A cached copy of the current codeql cli version.")
-
-(defun codeql-cli-version-cache-init ()
+(defun codeql-cli-version ()
   (interactive)
   (when codeql--cli-buffer-local
-    (setq codeql--cli-info (shell-command-to-string (format "%s version" codeql--cli-buffer-local)))))
+    (shell-command-to-string (format "%s version" codeql--cli-buffer-local))))
 
-;; re-run this anytime you upgrade the cli without restarting emacs
-(codeql-cli-version-cache-init)
+;; cache version info for CodeQL CLI
+(defvar-local codeql--cli-info (codeql-cli-version)
+  "A cached copy of the current codeql cli version.")
 
 ;; Projectile configuration
 (when codeql-configure-projectile
@@ -321,7 +318,8 @@ in local and remote contexts to something that readily exists.")
                             (message "Added %s to search paths." path)
                             path))))
           ;; all codeql cli commands will also execute in the remote context
-          (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path)))
+          (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path))
+          (setq codeql--cli-info (codeql-cli-version)))
       (error "Can not start session in remote context without path to codeql cli.")))
   ;; ensure we have the eglot LSP client setup
   (when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
@@ -359,11 +357,14 @@ in local and remote contexts to something that readily exists.")
   (cond ((file-remote-p file)
          file)
         ((file-remote-p default-directory)
-         (let ((v (tramp-dissect-file-name default-directory)))
-           (format "/%s:%s@%s:%s"
-                   (tramp-file-name-method v)
-                   (tramp-file-name-user v)
-                   (tramp-file-name-host v)
+         (let* ((v (tramp-dissect-file-name default-directory))
+                (method (tramp-file-name-method v))
+                (user (tramp-file-name-user v))
+                (host (tramp-file-name-host v)))
+           (format "/%s:%s%s:%s"
+                   method
+                   (if user (format "%s@" user) "")
+                   host
                    file)))
         (t
          file)))

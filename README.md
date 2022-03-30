@@ -230,6 +230,8 @@ Otherwise hidden features such as max path depths for path queries are unobtrusi
 
 ![screenshot](img/codeql-over-tramp.png?raw=true "emacs-codeql")
 
+On emacs 28.0.92, TRAMP version (2.5.2) provides a fairly trouble free experience on Linux even with the LSP enabled, at least in my experience. On emacs 27.2, with the older version of TRAMP, I've had less luck with the LSP experience, but the query server performs fine over TRAMP. `emacs-codeql` will ask for confirmation to enable the LSP when it detects it is running in a remote context. When in doubt, keep it disabled.
+
 ## Language Server Protocol
 
 `emacs-codeql` performs very well with `eglot`. Due to the codeql language server relying on `workspaceFolders` support, `eglot 20220326.2143` or newer is required from MELPA, which includes the basic project-root based `workspaceFolders` introduced in: https://github.com/joaotavora/eglot/commit/9eb9353fdc15c91a66ef8f4e53e18b22aa0870cd
@@ -242,9 +244,11 @@ It is HIGHLY recommended to enable both eglot and projectile configurations, as 
 
 ### LSP + TRAMP
 
-While the recommended LSP client, `eglot`, does function over TRAMP, running LSP over TRAMP can be very quirky and laggy, and slow initialization can be blocking for emacs. When operating in a TRAMP context, `emacs-codeql` will ask you if you want to enable the LSP client, unless you reaaaally want it, I recommend disabling it for remote editing and query debugging. 
+While the recommended LSP client, `eglot`, does function over TRAMP, running LSP over TRAMP can be very quirky and laggy unless you're on the latest emacs and TRAMP versions. Slow server initialization can be blocking to the point of full freezes. When operating in a TRAMP context, `emacs-codeql` will ask you if you want to enable the LSP client, unless you reaaaally want it, I recommend disabling it for remote editing and query debugging.
 
 The codeql query server, while also running jsonrpc over stdio, is not tied to a direct editor feedback loop, so it is a much more pleasant experience over TRAMP, so all local functionality is enabled and available.
+
+Having said that, on emacs 28.0.92, TRAMP version (2.5.2) provides a fairly trouble free experience on Linux at least even with LSP enabled remotely.
 
 ## Known Quirks
 
@@ -254,11 +258,11 @@ You can re-run the query and it will execute fine on the second run and any subs
 
 ### Sometimes running a remote query over TRAMP gets "stuck"
 
-Currently `emacs-codeql` uses synchronous shell commands to invoke the codeql cli with various tasks, ranging from meta data gathering to result parsing. While these commands are generally short lived, and longer tasks such as query compilation and evaluation are handled by the query server asynchronously, on rare occasion one of the synchronous commands may block emacs, due to TRAMP quirks. This is known behavior, and I'm thinking about a more asynchronous design for the shell command handling. In practice this does not happen so frequently that it causes too much friction, but buyer beware.
+Currently `emacs-codeql` uses synchronous shell commands to invoke the codeql cli with various tasks, ranging from meta data gathering to result parsing. While these commands are generally short lived, and longer tasks such as query compilation and evaluation are handled by the query server asynchronously, on rare occasion one of the synchronous commands may block emacs, due to TRAMP quirks. This is known behavior, and I'm thinking about a more asynchronous design for the shell command handling. In practice this does not happen so frequently that it causes too much friction, but buyer beware when venturing into remote contexts.
 
 ### TRAMP sometimes returns unexpected data in buffers
 
-The code has some re-entrancy issues currently which makes the TRAMP support a little flaky if you're spamming a ton of operations in sequence. I'm working on resolving these for a more stable experience, as well as looking into how to improve the LSP experience over TRAMP as well.
+The code has some re-entrancy issues currently which makes the TRAMP support a little flaky if you're spamming a ton of operations rapidly. I'm working on resolving these for a more stable experience, as well as looking into how to improve the LSP experience over TRAMP as well on older versions of emacs and TRAMP.
 
 ## TODO
 
