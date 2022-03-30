@@ -357,11 +357,14 @@ in local and remote contexts to something that readily exists.")
   (cond ((file-remote-p file)
          file)
         ((file-remote-p default-directory)
-         (let ((v (tramp-dissect-file-name default-directory)))
-           (format "/%s:%s@%s:%s"
-                   (tramp-file-name-method v)
-                   (tramp-file-name-user v)
-                   (tramp-file-name-host v)
+         (let* ((v (tramp-dissect-file-name default-directory))
+                (method (tramp-file-name-method v))
+                (user (tramp-file-name-user v))
+                (host (tramp-file-name-host v)))
+           (format "/%s:%s%s:%s"
+                   method
+                   (if user (format "%s@" user) "")
+                   host
                    file)))
         (t
          file)))
