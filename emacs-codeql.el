@@ -206,7 +206,7 @@
 
 ;;; global user configuration options (XXX: move to defcustom)
 
-(defvar codeql-transient-binding "C-c q"
+(defvar codeql-transient-binding "C-c C-d"
   "The keybinding to start the emacs-codeql transient ui inside ql-tree-sitter-mode.")
 
 (defvar codeql-configure-eglot-lsp t
