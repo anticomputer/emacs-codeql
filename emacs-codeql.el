@@ -259,8 +259,25 @@ in local and remote contexts to something that readily exists.")
 (defvar codeql-max-raw-results 2000
   "The max amount of raw result tuples to render in an org-table.")
 
+(defun codeql--search-paths-from-config ()
+  ;; see if we have any paths configured in ~/.config/codeql/config, if so, use them as well
+  (let ((config-path (expand-file-name (codeql--tramp-wrap "~/.config/codeql/config"))))
+    (when-let ((search-paths-string
+                (and (codeql--file-exists-p config-path)
+                     (codeql--shell-command-to-string
+                      ;; deal with both = and " " syntaxes
+                      (format "grep '^--search-path' %s" config-path)))))
+      (let ((path-config
+             (cadr (split-string (string-trim-right search-paths-string) " +\\|="))))
+        ;; make sure all the search paths exist
+        (cl-loop with search-paths = (split-string path-config ":")
+                 for path in search-paths do
+                 (unless (codeql--file-exists-p path)
+                   (error (format "Non-existing search path in configuration: %s" path))))
+        (list path-config)))))
+
 (defun codeql--search-path ()
-  "Return the user configured codeql cli search paths."
+  "Return any currently configured codeql cli search paths."
   (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
 ;; cache version info for CodeQL CLI
@@ -316,7 +333,10 @@ in local and remote contexts to something that readily exists.")
   "Set up a codeql buffer context correctly."
   ;; use whatever the current config for codeql-cli and codeql-search-paths is
   (setq codeql--cli-buffer-local codeql-cli)
-  (setq codeql--search-paths-buffer-local codeql-search-paths)
+  (setq codeql--search-paths-buffer-local
+        ;; we'll want both anything that might be in the .config + user customizations
+        (append (codeql--search-paths-from-config)
+                codeql-search-paths))
   ;; decide whether we want to use the gh cli to run our codeql commands
   (when (and codeql-use-gh-codeql-extension-when-available
              (codeql--gh-codeql-cli-available-p))
