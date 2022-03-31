@@ -525,38 +525,26 @@ in local and remote contexts to something that readily exists.")
   "A shell command to string that gives us explicit control over stdout and stderr."
   (when (or verbose codeql-verbose-commands)
     (message "Running %s cmd: %s" (if (file-remote-p default-directory) "remote" "local") cmd))
-  ;; let tramp work its magic if we're in a remote context
-  ;; create explicit buffers while we're debugging this crud still
-  (let ((stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
-        (stdout-buffer (generate-new-buffer "* codeql--shell-command-to-string stdout *")))
-    (if (file-remote-p default-directory)
-        ;; executing remotely over tramp
-        (progn
-          ;;(setq tramp-verbose 6)
-          (let ((exit-code (shell-command cmd stdout-buffer stderr-buffer)))
+  (with-temp-buffer
+    (let* ((stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
+           (stdout-buffer (generate-new-buffer "* codeql--shell-command-to-string stdout *"))
+           ;; shell-command will work in remote context pending default-directory
+           (exit-code
+            (apply 'process-file
+                   shell-file-name
+                   nil
+                   ;; redirect stderr here somewhere if we need to
+                   `(,stdout-buffer nil)
+                   nil
+                   shell-command-switch
+                   (list cmd)))
+           (stdout-data
             (when (eql exit-code 0)
-              (let ((stdout-data
-                     (with-current-buffer stdout-buffer (buffer-string))))
-                (unless keep-stdout
-                  ;;(message "XXX: stdout: %s" stdout-data)
-                  (kill-buffer stdout-buffer))
-                stdout-data))))
-      ;; executing locally, we want more control over the process
-      (let ((exit-code (apply 'call-process
-                              shell-file-name
-                              nil
-                              ;; redirect stderr here somewhere if we need to
-                              `(,stdout-buffer nil)
-                              nil
-                              shell-command-switch
-                              (list cmd))))
-        (when (eql exit-code 0)
-          ;; return stdout on success, nil otherwise
-          (let ((stdout-data
-                 (with-current-buffer stdout-buffer (buffer-string))))
-            (unless keep-stdout
-              (kill-buffer stdout-buffer))
-            stdout-data))))))
+              (with-current-buffer stdout-buffer (buffer-string)))))
+      (unless keep-stdout
+        (kill-buffer stdout-buffer))
+      ;; return stdout or nil
+      stdout-data)))
 
 (defun codeql--resolve-query-paths (query-path)
   "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH."
