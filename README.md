@@ -232,6 +232,62 @@ Otherwise hidden features such as max path depths for path queries are unobtrusi
 
 On emacs 28.0.92, TRAMP version (2.5.2) provides a fairly trouble free experience on Linux even with the LSP enabled, at least in my experience. On emacs 27.2, with the older version of TRAMP, I've had less luck with the LSP experience, but the query server performs fine over TRAMP. `emacs-codeql` will ask for confirmation to enable the LSP when it detects it is running in a remote context. When in doubt, keep it disabled.
 
+For optimal performance over TRAMP, especially if you're expecting very large (multiple thousands) of result sets, I recommend the following settings:
+
+```elisp
+;; be ok with large process outputs
+(setq read-process-output-max (* 1024 1024))
+
+;; disable file cache, vc registration in tramp
+(setq remote-file-name-inhibit-cache nil)
+(setq vc-ignore-dir-regexp
+      (format "%s\\|%s"
+              vc-ignore-dir-regexp
+              tramp-file-name-regexp))
+              
+;; shush tramp, shush
+(setq tramp-verbose 1)
+
+;; ensure projectile doesn't trigger tramp ops
+(setq projectile-mode-line-function (lambda () "Projectile"))
+```
+
+### GitHub Codespaces access over TRAMP
+
+I use the following config to enable convenient GitHub Codespaces access from emacs over TRAMP:
+
+
+```elisp
+;; add gh codespaces ssh method support for tramp editing
+;; e.g. C-x C-f /ghcs:codespace-name:/path/to/file :)
+(let ((ghcs (assoc "ghcs" tramp-methods))
+      (ghcs-methods '((tramp-login-program "gh")
+                      (tramp-login-args (("codespace") ("ssh") ("-c") ("%h")))
+                      (tramp-remote-shell "/bin/sh")
+                      (tramp-remote-shell-login ("-l"))
+                      (tramp-remote-shell-args ("-c")))))
+  ;; just for debugging the methods
+  (if ghcs (setcdr ghcs ghcs-methods)
+    (push (cons "ghcs" ghcs-methods) tramp-methods)))
+
+;; provide codespace name completion for ghcs tramp method
+;; use C-j if you use ivy to kick in host completion
+(defun my/tramp-parse-codespaces (&optional nop)
+  (let ((results '())
+        (codespaces
+         (split-string
+          (shell-command-to-string
+           "gh codespace list --json name -q '.[].name'"))))
+    (dolist (name codespaces)
+      ;; tramp completion expects a list of (user host)
+      (add-to-list 'results (list nil name)))
+    results))
+
+(tramp-set-completion-function "ghcs" '((my/tramp-parse-codespaces "")))
+```
+
+With the completion function in place, you can just TAB to get a list of your available Codespaces when opening a `/ghcs:` prefixed file.
+
 ## Language Server Protocol
 
 `emacs-codeql` performs very well with `eglot`. Due to the codeql language server relying on `workspaceFolders` support, `eglot 20220326.2143` or newer is required from MELPA, which includes the basic project-root based `workspaceFolders` introduced in: https://github.com/joaotavora/eglot/commit/9eb9353fdc15c91a66ef8f4e53e18b22aa0870cd
