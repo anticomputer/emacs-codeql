@@ -1159,13 +1159,13 @@ This applies to both normal evaluation and quick evaluation.")
                              "\n"))
                            ;; add any codeflow paths and their associated nodes for this issue
                            (when code-flows
-                             (cl-loop for paths in code-flows do
-                                      (cl-loop for path in paths
-                                               for i below (length paths) do
+                             (cl-loop for path in code-flows
+                                      for i below (length code-flows) do
+                                      (cl-loop for nodes in path do
                                                ;; add the location|path nodes to the tree :)
                                                (insert (codeql--org-list-from-nodes
                                                         parent-buffer
-                                                        path
+                                                        nodes
                                                         (format "** Path #%s\n" i)))))))
                   ;; add related locations as a top level
                   (when related-locations
