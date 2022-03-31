@@ -235,6 +235,9 @@ in local and remote contexts to something that readily exists.")
 (defvar codeql-cli (executable-find "codeql")
   "Path to codeql-cli")
 
+(defvar codeql-use-gh-codeql-extension-when-available t
+  "If emacs-codeql detects the presence of a codeql enabled gh cli, use it.")
+
 (defvar codeql-search-paths
   (list (expand-file-name "~/codeql-home/codeql-repo")
         (expand-file-name "~/codeql-home/codeql-go")
@@ -242,8 +245,16 @@ in local and remote contexts to something that readily exists.")
   "codeql cli library search paths.")
 
 ;; we use buffer-local copies of these so we can play context dependent tricks
-(defvar-local codeql--cli-buffer-local codeql-cli)
-(defvar-local codeql--search-paths-buffer-local codeql-search-paths)
+(defvar-local codeql--cli-buffer-local nil)
+(defvar-local codeql--search-paths-buffer-local nil)
+
+(defun codeql--gh-codeql-cli-available-p ()
+  (condition-case nil
+      (eql 0 (with-temp-buffer
+               (process-file "gh" nil `(,(current-buffer) nil) nil "codeql")))
+    (error nil)))
+
+(defvar-local codeql--use-gh-cli nil)
 
 (defvar codeql-max-raw-results 2000
   "The max amount of raw result tuples to render in an org-table.")
@@ -252,13 +263,8 @@ in local and remote contexts to something that readily exists.")
   "Return the user configured codeql cli search paths."
   (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
-(defun codeql-cli-version ()
-  (interactive)
-  (when codeql--cli-buffer-local
-    (shell-command-to-string (format "%s version" codeql--cli-buffer-local))))
-
 ;; cache version info for CodeQL CLI
-(defvar-local codeql--cli-info (codeql-cli-version)
+(defvar-local codeql--cli-info nil
   "A cached copy of the current codeql cli version.")
 
 ;; Projectile configuration
@@ -279,48 +285,86 @@ in local and remote contexts to something that readily exists.")
 
   (cl-assert codeql--cli-buffer-local t)
 
-  (list codeql--cli-buffer-local
-        "execute" "language-server"
-        (format "--search-path=%s" (codeql--search-path))
-        "--check-errors" "ON_CHANGE"
-        "-q"))
+  (let ((lsp-server-cmd
+         (append
+          (when codeql--use-gh-cli '("gh"))
+          (list
+           codeql--cli-buffer-local
+           "execute" "language-server"
+           (format "--search-path=%s" (codeql--search-path))
+           "--check-errors" "ON_CHANGE"
+           "-q"))))
+    (message "Using LSP server cmd: %s" lsp-server-cmd)
+    lsp-server-cmd))
 
 ;; LSP configuration
-(when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
+(when codeql-configure-eglot-lsp
   (require 'eglot)
 
   ;; only configure eglot for codeql when we have the cli available in PATH
   (add-to-list 'eglot-server-programs
                `(ql-tree-sitter-mode . ,#'codeql--lang-server-contact)))
 
+(defun codeql--get-cli-version ()
+  ;; used in setup for ql-tree-sitter-mode so we can not assert the mode here yet.
+  (let* ((cmd (format "%s version" codeql--cli-buffer-local)))
+    (codeql--shell-command-to-string
+     (if codeql--use-gh-cli
+         (format "gh %s" cmd) cmd))))
+
 (defun codeql--buffer-local-init-hook ()
   "Set up a codeql buffer context correctly."
+  ;; use whatever the current config for codeql-cli and codeql-search-paths is
+  (setq codeql--cli-buffer-local codeql-cli)
+  (setq codeql--search-paths-buffer-local codeql-search-paths)
+  ;; decide whether we want to use the gh cli to run our codeql commands
+  (when (and codeql-use-gh-codeql-extension-when-available
+             (codeql--gh-codeql-cli-available-p))
+    (message "Enabling gh cli codeql extension use.")
+    (setq codeql--use-gh-cli t)
+    (setq codeql--cli-buffer-local "codeql"))
   ;; ensure we have somewhere to store result data in both local and remote contexts
-  (codeql--init-state-dirs) ;; XXX: this will only create if the dirs dont exist
+  (codeql--init-state-dirs)
   ;; if we're in a remote context, make sure we know where the cli lives
   (when (and (file-remote-p default-directory))
     ;; initialize our results storage if need be
-    (if-let ((codeql-path (or (let ((remote-path (codeql--shell-command-to-string "which codeql")))
-                                (when remote-path
-                                  (message "Found codeql cli in remote path." remote-path)
-                                  (string-trim-right remote-path)))
-                              (read-file-name "Remote session! Need path to codeql cli bin: "
-                                              nil default-directory t))))
+    ;; make sure we also have gh cli codeql configured remotely
+    (setq codeql--use-gh-cli (and codeql--use-gh-cli (codeql--gh-codeql-cli-available-p)))
+    (if-let ((codeql-path
+              (cond
+               ;; when using the gh cli extension, our "path" is just "codeql"
+               (codeql--use-gh-cli
+                (message "gh cli codeql extension available on remote, using that.")
+                "codeql")
+
+               ;; if not using the gh cli extension, we need an explicit path
+               ;; but lets try to find that automatically before nagging the user
+               (t
+                (if (let ((remote-path (executable-find "codeql" t)))
+                      (when remote-path
+                        (message "Found codeql cli in remote path: %s" remote-path)
+                        (string-trim-right remote-path)))
+                    (read-file-name "Need remote path to codeql cli bin: "
+                                    nil default-directory t))))))
         (progn
-          ;; for remotes sessions, we require the standard cli/repo sibling relationship
+          ;; NOTE: if you're using the gh cli extension, you need to set your paths
+          ;; I recommend setting your search paths explicitly in a config file using:
+          ;; https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/
           (setq codeql--search-paths-buffer-local
                 (append
                  '("./")
-                 (cl-loop while (yes-or-no-p "Remote session! Set (another) search path? (not needed if cli is sibling to codeql repos)")
+                 (cl-loop while (yes-or-no-p "Add remote search path? (not needed for cli siblings or when .config/codeql/config has search paths)")
                           collect
                           (when-let ((path (file-local-name
                                             (read-file-name "Path: " nil default-directory t))))
                             (message "Added %s to search paths." path)
                             path))))
           ;; all codeql cli commands will also execute in the remote context
-          (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path))
-          (setq codeql--cli-info (codeql-cli-version)))
+          (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path)))
       (error "Can not start session in remote context without path to codeql cli.")))
+  ;; do any final init we need here
+  (setq codeql--cli-info (codeql--get-cli-version))
+  (cl-assert codeql--cli-info t)
   ;; ensure we have the eglot LSP client setup
   (when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
     (when (or (not (file-remote-p default-directory))
@@ -527,7 +571,8 @@ in local and remote contexts to something that readily exists.")
     (message "Running %s cmd: %s" (if (file-remote-p default-directory) "remote" "local") cmd))
   (condition-case nil
       (with-temp-buffer
-        (let* ((stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
+        (let* ((cmd (if codeql--use-gh-cli (format "gh %s" cmd) cmd))
+               (stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
                (stdout-buffer (generate-new-buffer (format "* stdout: %s *" cmd)))
                ;; process-file will work in remote context pending default-directory
                (exit-code
@@ -554,10 +599,12 @@ in local and remote contexts to something that readily exists.")
   ;; only resolve once for current query buffer
   (unless (and codeql--library-path codeql--dbscheme)
     (message "Resolving query paths.")
-    (let ((json (codeql--shell-command-to-string
-                 (format "%s resolve library-path -v --log-to-stderr --format=json --additional-packs=%s --query=%s"
-                         codeql--cli-buffer-local (codeql--search-path)
-                         (codeql--tramp-unwrap query-path)))))
+    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --additional-packs=%s --query=%s"
+                        codeql--cli-buffer-local (codeql--search-path)
+                        (codeql--tramp-unwrap query-path)))
+           (json (codeql--shell-command-to-string
+                  (if codeql--use-gh-cli
+                      (format "gh %s" cmd) cmd))))
       (when json
         (condition-case nil
             (cl-destructuring-bind (&key libraryPath dbscheme &allow-other-keys)
@@ -571,9 +618,11 @@ in local and remote contexts to something that readily exists.")
 (defun codeql--database-info (database-path)
   "Resolve info for DATABASE-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (let ((json (codeql--shell-command-to-string
-               (format "%s resolve database -v --log-to-stderr --format=json -- %s"
-                       codeql--cli-buffer-local (codeql--tramp-unwrap database-path)))))
+  (let* ((cmd (format "%s resolve database -v --log-to-stderr --format=json -- %s"
+                      codeql--cli-buffer-local (codeql--tramp-unwrap database-path)))
+         (json (codeql--shell-command-to-string
+                (if codeql--use-gh-cli
+                    (format "gh %s" cmd) cmd))))
     (when json
       (condition-case nil
           (json-parse-string json :object-type 'alist)
@@ -582,9 +631,11 @@ in local and remote contexts to something that readily exists.")
 (defun codeql--database-upgrades (database-scheme)
   "Resolve upgrades for DATABASE-SCHEME."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (let ((json (codeql--shell-command-to-string
-               (format "%s resolve upgrades -v --log-to-stderr --format=json -- %s"
-                       codeql--cli-buffer-local (codeql--tramp-unwrap database-scheme)))))
+  (let* ((cmd (format "%s resolve upgrades -v --log-to-stderr --format=json -- %s"
+                      codeql--cli-buffer-local (codeql--tramp-unwrap database-scheme)))
+         (json (codeql--shell-command-to-string
+                (if codeql--use-gh-cli
+                    (format "gh %s" cmd) cmd))))
     (when json
       (condition-case nil
           (json-parse-string json :object-type 'alist)
@@ -593,9 +644,11 @@ in local and remote contexts to something that readily exists.")
 (defun codeql--query-info (query-path)
   "Retrieve metadata for QUERY-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (let ((json (codeql--shell-command-to-string
-               (format "%s resolve metadata -v --log-to-stderr --format=json -- %s"
-                       codeql--cli-buffer-local (codeql--tramp-unwrap query-path)))))
+  (let* ((cmd (format "%s resolve metadata -v --log-to-stderr --format=json -- %s"
+                      codeql--cli-buffer-local (codeql--tramp-unwrap query-path)))
+         (json (codeql--shell-command-to-string
+                (if codeql--use-gh-cli
+                    (format "gh %s" cmd) cmd))))
     (when json
       (condition-case nil
           (json-parse-string json :object-type 'alist)
@@ -604,47 +657,56 @@ in local and remote contexts to something that readily exists.")
 (defun codeql--bqrs-info (bqrs-path)
   "Retrieve info for BQRS-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (let ((json (codeql--shell-command-to-string
-               (format "%s bqrs info -v --log-to-stderr --format=json -- %s"
-                       codeql--cli-buffer-local (codeql--tramp-unwrap bqrs-path)))))
+  (let* ((cmd (format "%s bqrs info -v --log-to-stderr --format=json -- %s"
+                      codeql--cli-buffer-local (codeql--tramp-unwrap bqrs-path)))
+         (json (codeql--shell-command-to-string
+                (if codeql--use-gh-cli
+                    (format "gh %s" cmd) cmd))))
     (when json
       (condition-case nil
           (json-parse-string json :object-type 'alist)
         (error (progn (message "error parsing json: %s" json) nil))))))
 
 (defun codeql--bqrs-to-csv (bqrs-path entities)
-  (let ((csv-file (concat bqrs-path ".csv")))
+  (let* ((csv-file (concat bqrs-path ".csv"))
+         (cmd (format "%s bqrs decode --output=%s --format=csv --entities=%s -- %s"
+                      codeql--cli-buffer-local
+                      (codeql--tramp-unwrap csv-file) entities (codeql--tramp-unwrap bqrs-path))))
     (when (codeql--shell-command-to-string
-           (format "%s bqrs decode --output=%s --format=csv --entities=%s -- %s"
-                   codeql--cli-buffer-local
-                   (codeql--tramp-unwrap csv-file) entities (codeql--tramp-unwrap bqrs-path)))
+           (if codeql--use-gh-cli
+               (format "gh %s" cmd) cmd))
       (with-temp-buffer (insert-file-contents csv-file) (buffer-string)))))
 
 (defun codeql--bqrs-to-json (bqrs-path entities)
-  (let ((json-file (concat bqrs-path ".json")))
+  (let* ((json-file (concat bqrs-path ".json"))
+         (cmd (format "%s bqrs decode --output=%s --format=json --entities=%s -- %s"
+                      codeql--cli-buffer-local
+                      (codeql--tramp-unwrap json-file) entities (codeql--tramp-unwrap bqrs-path))))
     (when (codeql--shell-command-to-string
-           (format "%s bqrs decode --output=%s --format=json --entities=%s -- %s"
-                   codeql--cli-buffer-local
-                   (codeql--tramp-unwrap json-file) entities (codeql--tramp-unwrap bqrs-path)))
+           (if codeql--use-gh-cli
+               (format "gh %s" cmd) cmd))
       (with-temp-buffer (insert-file-contents json-file) (buffer-string)))))
 
 (defvar-local codeql--path-problem-max-paths 10)
 
 (defun codeql--bqrs-to-sarif (bqrs-path id kind &optional max-paths)
   (cl-assert (and id kind) t)
-  (let ((sarif-file (concat bqrs-path ".sarif")))
+  (let* ((sarif-file (concat bqrs-path ".sarif"))
+         (cmd (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s -- %s"
+                      codeql--cli-buffer-local id kind
+                      (codeql--tramp-unwrap sarif-file) (or max-paths codeql--path-problem-max-paths)
+                      (codeql--tramp-unwrap bqrs-path))))
     (when (codeql--shell-command-to-string
-           (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s -- %s"
-                   codeql--cli-buffer-local id kind
-                   (codeql--tramp-unwrap sarif-file) (or max-paths codeql--path-problem-max-paths)
-                   (codeql--tramp-unwrap bqrs-path)))
+           (if codeql--use-gh-cli
+               (format "gh %s" cmd) cmd))
       (with-temp-buffer (insert-file-contents sarif-file) (buffer-string)))))
 
 (defun codeql--database-archive-zipinfo ()
   "Return extraction-relative file listing for source archive zip."
   (let ((zipinfo (codeql--shell-command-to-string
                   (format "%s -1 %s"
-                          (executable-find "zipinfo") codeql--database-source-archive-zip))))
+                          (executable-find "zipinfo" (file-remote-p default-directory))
+                          codeql--database-source-archive-zip))))
     (when zipinfo
       (let ((zipinfo-relative-paths
              (cl-map 'list (lambda (file) file) (split-string zipinfo "\n"))))))))
@@ -662,7 +724,8 @@ in local and remote contexts to something that readily exists.")
         (message "Source root verified to exist in trusted path ... extracting.")
         (codeql--shell-command-to-string
          (format "%s %s -d %s"
-                 (executable-find "unzip")
+                 ;; XXX: double check that executable find works under TRAMP context
+                 (executable-find "unzip" (file-remote-p default-directory))
                  (codeql--file-truename codeql--database-source-archive-zip)
                  (codeql--file-truename codeql--database-source-archive-root))))
     (message "Source archive already extracted.")
@@ -700,7 +763,10 @@ in local and remote contexts to something that readily exists.")
 (defun codeql--query-server-resolve-ram (&optional max-ram)
   "Resolve ram options for jvm, optionally bounding to MAX-RAM in MB."
   (let* ((max-ram (if max-ram (format "-M=%s" max-ram) ""))
-         (options (codeql--shell-command-to-string (format "%s resolve ram %s --" codeql--cli-buffer-local max-ram))))
+         (cmd (format "%s resolve ram %s --" codeql--cli-buffer-local max-ram))
+         (options (codeql--shell-command-to-string
+                   (if codeql--use-gh-cli
+                       (format "gh %s" cmd) cmd))))
     (when options
       ;; errr ... it's late
       (split-string (string-trim-right options) "\n"))))
@@ -723,17 +789,22 @@ in local and remote contexts to something that readily exists.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (if codeql--query-server
       (message "There is already a query server running")
-    (let ((args (append
-                 (transient-args transient-current-command)
-                 ;; non-user arguments go here
-                 (codeql--query-server-resolve-ram codeql--query-server-max-ram)
-                 '("--require-db-registration"))))
+    (let* ((ram-options (codeql--query-server-resolve-ram codeql--query-server-max-ram))
+           (args (append
+                  (transient-args transient-current-command)
+                  ram-options
+                  ;; non-user arguments go here
+                  '("--require-db-registration"))))
+      (cl-assert ram-options t)
       ;; spawn the server process
       (let* ((name (format "CODEQL Query Server (%s -> %s)"
                            ;; show query file name for this server if available
                            (file-name-base (directory-file-name default-directory))
                            (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
-             (cmd (append (list codeql--cli-buffer-local "execute" "query-server") args)))
+             (cmd (append
+                   (when codeql--use-gh-cli '("gh"))
+                   (list codeql--cli-buffer-local "execute" "query-server")
+                   args)))
         (message "Starting query server.")
         ;; manage these buffer local
         (setq codeql--query-server

@@ -105,6 +105,56 @@ For convenience, `emacs-codeql` provides a [cli bootstrap script](https://raw.gi
 
 You can find existing databases for a ton of open source projects on [LGTM.com](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#obtaining-databases-from-lgtm-com), or you can [create your own](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#creating-codeql-databases) using the codeql cli. 
 
+#### Using the GitHub CLI codeql extension
+
+If you use the GitHub cli, then you can also use the `github/gh-codeql` cli extension to initialize and configure your codeql cli:
+
+TL;DR:
+
+```shell
+# clone codeql and codeql repos and configure codeql search paths
+echo "--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo" >> .config/codeql/config
+# install codeql extension
+gh extension install github/gh-codeql
+# verify search paths are configured correctly
+gh codeql resolve qlpacks
+```
+
+##### Step 1: configure your codeql search paths
+
+You'll still need to clone the `github/codeql` and `github/codeql-go` repositories and make them available in the search path of the codeql cli. You can use the manual bootstrap script for that if you're so inclined, or manually clone them to a location of your preference.
+
+```
+@anticomputer ➜ ~ $ echo "--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo" >> .config/codeql/config
+```
+
+##### Step 2: install the gh-codeql extension
+```
+@anticomputer ➜ ~ $ gh extension install github/gh-codeql
+Cloning into '/home/codespace/.local/share/gh/extensions/gh-codeql'...
+remote: Enumerating objects: 78, done.
+remote: Counting objects: 100% (78/78), done.
+remote: Compressing objects: 100% (55/55), done.
+remote: Total 78 (delta 27), reused 46 (delta 12), pack-reused 0
+Receiving objects: 100% (78/78), 24.07 KiB | 6.02 MiB/s, done.
+Resolving deltas: 100% (27/27), done.
+✓ Installed extension github/gh-codeql
+```
+
+##### Step 3: initialize the codeql cli and verify you can resolve qlpacks
+```
+@anticomputer ➜ ~ $ gh codeql resolve qlpacks
+Downloading CodeQL CLI version v2.8.4...
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100   657  100   657    0     0   9125      0 --:--:-- --:--:-- --:--:--  9000
+100  323M  100  323M    0     0  80.1M      0  0:00:04  0:00:04 --:--:-- 82.9M
+Unpacking CodeQL CLI version v2.8.4...
+legacy-upgrades (/home/codespace/.local/share/gh/extensions/gh-codeql/dist/release/v2.8.4/legacy-upgrades)
+```
+
+Once the gh cli codeql extension is installed and configured, `emacs-codeql` will automagically use it both locally and remotely pending the value of `codeql-use-gh-codeql-extension-when-available`. If enabled and the gh cli exists without the codeql extension available, `emacs-codeql` will fall back to a normal path configuration, so you can safely keep this value set to `t`.
+
 ### Optional: build custom tree-sitter QL artifacts
 
 If this package does not contain the required `tree-sitter-langs` artifacts for your system, you may also need to install the following to be able to build the required QL `tree-sitter-langs` support for your system.
