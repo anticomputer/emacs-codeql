@@ -1181,9 +1181,6 @@ This applies to both normal evaluation and quick evaluation.")
     (with-current-buffer buffer
       (insert org-data)
       (org-mode)
-      ;; collapse by default
-      (goto-char (point-min))
-      (org-global-cycle)
       (when footer
         (goto-char (point-max))
         (insert "\n* Results Footer\n")
@@ -1426,11 +1423,14 @@ This applies to both normal evaluation and quick evaluation.")
                ;; alrighty, let's start processing some results into org data
                (let ((org-results
                       (cl-loop for result across results
+                               with n = (length results)
+                               for i below n
                                for message = (json-pointer-get result "/message/text")
                                for rule-id = (json-pointer-get result "/ruleId")
                                for code-flows = (json-pointer-get result "/codeFlows")
                                for related-locations = (json-pointer-get result "/relatedLocations")
                                for locations = (json-pointer-get result "/locations")
+                               do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
                                collect
                                ;; each result gets collected as its resulting org-data
                                (let* ((codeql--query-results (list (codeql--issue-with-nodes
