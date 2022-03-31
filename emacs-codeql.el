@@ -525,26 +525,28 @@ in local and remote contexts to something that readily exists.")
   "A shell command to string that gives us explicit control over stdout and stderr."
   (when (or verbose codeql-verbose-commands)
     (message "Running %s cmd: %s" (if (file-remote-p default-directory) "remote" "local") cmd))
-  (with-temp-buffer
-    (let* ((stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
-           (stdout-buffer (generate-new-buffer "* codeql--shell-command-to-string stdout *"))
-           ;; shell-command will work in remote context pending default-directory
-           (exit-code
-            (apply 'process-file
-                   shell-file-name
-                   nil
-                   ;; redirect stderr here somewhere if we need to
-                   `(,stdout-buffer nil)
-                   nil
-                   shell-command-switch
-                   (list cmd)))
-           (stdout-data
-            (when (eql exit-code 0)
-              (with-current-buffer stdout-buffer (buffer-string)))))
-      (unless keep-stdout
-        (kill-buffer stdout-buffer))
-      ;; return stdout or nil
-      stdout-data)))
+  (condition-case nil
+      (with-temp-buffer
+        (let* ((stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
+               (stdout-buffer (generate-new-buffer (format "* stdout: %s *" cmd)))
+               ;; process-file will work in remote context pending default-directory
+               (exit-code
+                (apply 'process-file
+                       shell-file-name
+                       nil
+                       ;; redirect stderr here somewhere if we need to
+                       `(,stdout-buffer nil)
+                       nil
+                       shell-command-switch
+                       (list cmd)))
+               (stdout-data
+                (when (eql exit-code 0)
+                  (with-current-buffer stdout-buffer (buffer-string)))))
+          (unless keep-stdout
+            (kill-buffer stdout-buffer))
+          ;; return stdout or signal error
+          (if stdout-data stdout-data (error "failed to execute cmd"))))
+    (error (progn (message "Error in codeql--shell-command-to-string: %s" cmd) nil))))
 
 (defun codeql--resolve-query-paths (query-path)
   "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH."
@@ -557,10 +559,12 @@ in local and remote contexts to something that readily exists.")
                          codeql--cli-buffer-local (codeql--search-path)
                          (codeql--tramp-unwrap query-path)))))
       (when json
-        (cl-destructuring-bind (&key libraryPath dbscheme &allow-other-keys)
-            (json-parse-string json :object-type 'plist)
-          (setq codeql--library-path libraryPath)
-          (setq codeql--dbscheme dbscheme)))))
+        (condition-case nil
+            (cl-destructuring-bind (&key libraryPath dbscheme &allow-other-keys)
+                (json-parse-string json :object-type 'plist)
+              (setq codeql--library-path libraryPath)
+              (setq codeql--dbscheme dbscheme))
+          (error (progn (message "error parsing json: %s" json) nil))))))
   ;; nil indicates there was an error resolving these
   (and codeql--library-path codeql--dbscheme))
 
@@ -571,7 +575,9 @@ in local and remote contexts to something that readily exists.")
                (format "%s resolve database -v --log-to-stderr --format=json -- %s"
                        codeql--cli-buffer-local (codeql--tramp-unwrap database-path)))))
     (when json
-      (json-parse-string json :object-type 'alist))))
+      (condition-case nil
+          (json-parse-string json :object-type 'alist)
+        (error (progn (message "error parsing json: %s" json) nil))))))
 
 (defun codeql--database-upgrades (database-scheme)
   "Resolve upgrades for DATABASE-SCHEME."
@@ -580,7 +586,9 @@ in local and remote contexts to something that readily exists.")
                (format "%s resolve upgrades -v --log-to-stderr --format=json -- %s"
                        codeql--cli-buffer-local (codeql--tramp-unwrap database-scheme)))))
     (when json
-      (json-parse-string json :object-type 'alist))))
+      (condition-case nil
+          (json-parse-string json :object-type 'alist)
+        (error (progn (message "error parsing json: %s" json) nil))))))
 
 (defun codeql--query-info (query-path)
   "Retrieve metadata for QUERY-PATH."
@@ -589,7 +597,9 @@ in local and remote contexts to something that readily exists.")
                (format "%s resolve metadata -v --log-to-stderr --format=json -- %s"
                        codeql--cli-buffer-local (codeql--tramp-unwrap query-path)))))
     (when json
-      (json-parse-string json :object-type 'alist))))
+      (condition-case nil
+          (json-parse-string json :object-type 'alist)
+        (error (progn (message "error parsing json: %s" json) nil))))))
 
 (defun codeql--bqrs-info (bqrs-path)
   "Retrieve info for BQRS-PATH."
@@ -598,7 +608,9 @@ in local and remote contexts to something that readily exists.")
                (format "%s bqrs info -v --log-to-stderr --format=json -- %s"
                        codeql--cli-buffer-local (codeql--tramp-unwrap bqrs-path)))))
     (when json
-      (json-parse-string json :object-type 'alist))))
+      (condition-case nil
+          (json-parse-string json :object-type 'alist)
+        (error (progn (message "error parsing json: %s" json) nil))))))
 
 (defun codeql--bqrs-to-csv (bqrs-path entities)
   (let ((csv-file (concat bqrs-path ".csv")))
