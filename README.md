@@ -80,80 +80,60 @@ Alternatively, you can clone this repository and place it into your emacs `load-
 
 ### Configuring the CodeQL CLI
 
-If you do not follow the standard `~/codeql-home/codeql-repo` conventions, you can customize the codeql search paths via `codeql-search-paths`.
+There's multiple ways you can bootstrap the codeql cli tool chain for query development. We'll outline two of the more popular strategies here.
 
-```elisp
-(setq codeql-search-paths
-      (list (expand-file-name "~/codeql-home/codeql-repo/")
-            (expand-file-name "~/codeql-home/codeql-go")
-            "./"))
-```
+#### 1: Use a bootstrap script to setup a codeql cli and library repo siblings
 
-IMPORTANT: CodeQL expects full paths for its search paths, so use `expand-file-name` when providing `~/` relative paths.
+For convenience, `emacs-codeql` provides a [cli bootstrap script](https://raw.githubusercontent.com/anticomputer/emacs-codeql/main/tools/bootstrap-codeql-cli.sh) which will bootstrap the codeql cli in a given current working directory. You can run this script, paste its resulting search path configuration into your `emacs-codeql` config, and you're off to the races.
 
-Note: keep "./" in `codeql-search-paths`, this entry will be buffer-local relative to the project root of your currently active query project.
-
-`~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go` is a clone of https://github.com/github/codeql-go
-
-According to codeql cli conventions, these repositories are expected to be siblings of your codeql cli location, e.g. I keep the codeql cli in `~/codeql-home/codeql-cli`.
+If you bootstrap into `~/codeql-home`, then `~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go` is a clone of https://github.com/github/codeql-go
 
 `emacs-codeql` expects the codeql cli to exist in your `PATH`. Follow the standard [codeql cli setup instructions](https://codeql.github.com/docs/codeql-cli/getting-started-with-the-codeql-cli/) to get the cli bootstrapped and add its location to your executable search `PATH`.
 
-#### CodeQL CLI bootstrap script
+#### 2: Using the GitHub CLI codeql extension
 
-For convenience, `emacs-codeql` provides a [cli bootstrap script](https://raw.githubusercontent.com/anticomputer/emacs-codeql/main/tools/bootstrap-codeql-cli.sh) which will bootstrap the codeql cli in a given current working directory. You can run this script, paste the search path configuration into your `emacs-codeql` config, and you're off to the races.
-
-You can find existing databases for a ton of open source projects on [LGTM.com](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#obtaining-databases-from-lgtm-com), or you can [create your own](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#creating-codeql-databases) using the codeql cli. 
-
-#### Using the GitHub CLI codeql extension
-
-If you use the GitHub cli, then you can also use the `github/gh-codeql` cli extension to initialize and configure your codeql cli:
+If you use the gh cli, then you can also use the `github/gh-codeql` cli extension to initialize and configure your codeql cli:
 
 TL;DR:
 
 ```shell
 # clone codeql and codeql repos and configure codeql search paths
-echo "--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo" >> .config/codeql/config
+echo "--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo" >> ~/.config/codeql/config
+
 # install codeql extension
 gh extension install github/gh-codeql
+
 # verify search paths are configured correctly
 gh codeql resolve qlpacks
 ```
 
-##### Step 1: configure your codeql search paths
+You'll still need to clone the `github/codeql` and `github/codeql-go` repositories as with the bootstrap script and make them available in the search path of the codeql cli.
 
-You'll still need to clone the `github/codeql` and `github/codeql-go` repositories and make them available in the search path of the codeql cli. You can use the manual bootstrap script for that if you're so inclined, or manually clone them to a location of your preference.
+Once the gh cli codeql extension is installed and configured, `emacs-codeql` will automagically use it both locally and remotely pending the value of `codeql-use-gh-codeql-extension-when-available` whenever its available.
 
-```
-@anticomputer ➜ ~ $ echo "--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo" >> .config/codeql/config
-```
+If unavailable, `emacs-codeql` will fall back to its normal executable path expectations, so you can safely keep this value set to `t`, which is the default.
 
-##### Step 2: install the gh-codeql extension
-```
-@anticomputer ➜ ~ $ gh extension install github/gh-codeql
-Cloning into '/home/codespace/.local/share/gh/extensions/gh-codeql'...
-remote: Enumerating objects: 78, done.
-remote: Counting objects: 100% (78/78), done.
-remote: Compressing objects: 100% (55/55), done.
-remote: Total 78 (delta 27), reused 46 (delta 12), pack-reused 0
-Receiving objects: 100% (78/78), 24.07 KiB | 6.02 MiB/s, done.
-Resolving deltas: 100% (27/27), done.
-✓ Installed extension github/gh-codeql
+#### Custom search paths
+
+IMPORTANT: CodeQL expects full paths for its search paths, so use `expand-file-name` when providing `~/` relative paths if you customize `codeql-search-paths`.
+
+If you prefer to use [`.config/codeql/config`](https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/) for your codeql cli configurations, you can also configure the `emacs-codeql` search-paths as:
+
+```elisp
+(setq codeql-search-paths (list "./"))
 ```
 
-##### Step 3: initialize the codeql cli and verify you can resolve qlpacks
+And then ensure your codeql cli configuration contains search paths in `.config/codeql/config`, e.g.
+
 ```
-@anticomputer ➜ ~ $ gh codeql resolve qlpacks
-Downloading CodeQL CLI version v2.8.4...
-  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
-                                 Dload  Upload   Total   Spent    Left  Speed
-100   657  100   657    0     0   9125      0 --:--:-- --:--:-- --:--:--  9000
-100  323M  100  323M    0     0  80.1M      0  0:00:04  0:00:04 --:--:-- 82.9M
-Unpacking CodeQL CLI version v2.8.4...
-legacy-upgrades (/home/codespace/.local/share/gh/extensions/gh-codeql/dist/release/v2.8.4/legacy-upgrades)
+λ ~ › echo "--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo" >> ~/.config/codeql/config
+λ ~ › cat ~/.config/codeql/config 
+--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo
+λ ~ › 
 ```
 
-Once the gh cli codeql extension is installed and configured, `emacs-codeql` will automagically use it both locally and remotely pending the value of `codeql-use-gh-codeql-extension-when-available`. If enabled and the gh cli exists without the codeql extension available, `emacs-codeql` will fall back to a normal path configuration, so you can safely keep this value set to `t`.
+Use `codeql resolve qlpacks` to double check that you can resolve all the expected qlpacks available in the default repositories.
+
 
 ### Optional: build custom tree-sitter QL artifacts
 
@@ -247,6 +227,8 @@ You can register a database for your current project via `M-x codeql-transient-q
 Database selection is buffer-local per query file and you can run as many concurrent query projects as you have resources available. Database history allows you to rapidly register/unregister databases that were seen across all sessions.
 
 `emacs-codeql` buffer-local approach means you can work on e.g. a `cpp` and `javascript` project concurrently, and you can an arbitrary amount of concurrent results buffers as you toggle between your query buffers.
+
+You can find existing databases for a ton of open source projects on [LGTM.com](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#obtaining-databases-from-lgtm-com), or you can [create your own](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#creating-codeql-databases) using the codeql cli. 
 
 ### Run a query or eval predicates
 
