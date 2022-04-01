@@ -127,7 +127,7 @@ Ensure your codeql cli configuration contains your search paths in `.config/code
 --search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo
 λ ~ › 
 ```
-In this example `~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go` is a clone of https://github.com/github/codeql-go
+In this example `~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go-repo` is a clone of https://github.com/github/codeql-go
 
 Use `codeql resolve qlpacks` to double check that you can resolve all the expected qlpacks available in the default repositories.
 

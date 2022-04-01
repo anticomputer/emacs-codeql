@@ -4,7 +4,7 @@
 
 CODEQL_REPO="" # set this to an existing clone of github.com/github/codeql, or leave empty to bootstrap
 CODEQL_GO_REPO="" # set this to an existing clone of github.com/github/codeql-go, or leave empty to bootstrap
-CODEQL_CLI_VERSION="v2.8.3"
+CODEQL_CLI_VERSION="v2.8.4"
 
 if [ "$(uname)" == "Darwin" ]; then
     CODEQL_CLI_RELEASE="https://github.com/github/codeql-cli-binaries/releases/download/$CODEQL_CLI_VERSION/codeql-osx64.zip"
@@ -47,12 +47,15 @@ bootstrap_codeql_cli () {
         fi
     fi
 
-    echo "*** START PATHS SNIP START ***"
-    echo '(setq codeql-search-paths (list '
-    echo "  \"$extraction_root/codeql-repo\""
-    echo "  \"$extraction_root/codeql-go-repo\""
-    echo "  \"./\")"
-    echo "*** SEARCH PATHS SNIP END ***"
+    echo ""
+    echo "*********************************************************************"
+    echo "   ADD THIS SEARCH PATH CONFIGURATION TO ~/.config/codeql/config     "
+    echo "*********************************************************************"
+    echo ""
+    echo "--search-path $extraction_root/codeql-repo:$extraction_root/codeql-go-repo"
+    echo ""
+    echo "********************* END OF CONFIGURATION **************************"
+    echo ""
     
     if [[ $CODEQL ]]; then
         echo "[?] Which codeql cli do you want to use?"
@@ -105,7 +108,11 @@ bootstrap_codeql_cli () {
 
     CODEQL="$ql_bin_path"
 
-    echo "Using $CODEQL as CodeQL path"
+    echo "********************** PATH CONFIGURATION ****************************"
+    echo ""
+    echo "export PATH=$extraction_root/codeql:\$PATH"
+    echo ""
+    echo "********************* END OF CONFIGURATION ***************************"
 
     return 0
 }
