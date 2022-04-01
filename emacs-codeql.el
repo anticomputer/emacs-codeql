@@ -770,7 +770,9 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
                   '("--require-db-registration"))))
       (cl-assert ram-options t)
       ;; spawn the server process
-      (let* ((name (format "CODEQL Query Server (%s -> %s)"
+      (let* ((name (format "CODEQL Query Server (%s%s -> %s)"
+                           ;; add remote prefix if its there to dedicate event buffer
+                           (or (file-remote-p default-directory) "")
                            ;; show query file name for this server if available
                            (file-name-base (directory-file-name default-directory))
                            (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
@@ -1627,7 +1629,7 @@ This applies to both normal evaluation and quick evaluation.")
                      (db-path db-path)
                      (quick-eval quick-eval))
          (jsonrpc-lambda (&rest _)
-           (message "Query run completed ... checking results.")
+           (message "Query run completed, checking results.")
            ;; if size is > 0 then we have results to deal with
            (let ((bqrs-size (file-attribute-size (file-attributes bqrs-path))))
              (if (> bqrs-size 0)
@@ -1659,6 +1661,9 @@ This applies to both normal evaluation and quick evaluation.")
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
+       :timeout-fn
+       (jsonrpc-lambda (&key _ &allow-other-keys)
+         (message ":evaluation/runQueries timed out."))
        :deferred :evaluation/runQueries))))
 
 (defun codeql--query-server-request-compile (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval)
@@ -1720,6 +1725,7 @@ This applies to both normal evaluation and quick evaluation.")
                      (db-path db-path)
                      (quick-eval quick-eval))
          (jsonrpc-lambda (&key messages &allow-other-keys)
+           (message "Compilation completed, checking results.")
            (let ((abort-run-query nil))
              (seq-map (lambda (m)
                         (cl-destructuring-bind (&key severity message &allow-other-keys)
@@ -1735,6 +1741,9 @@ This applies to both normal evaluation and quick evaluation.")
                                                  query-info
                                                  db-path
                                                  quick-eval)))))
+       :timeout-fn
+       (jsonrpc-lambda (&key _ &allow-other-keys)
+         (message ":compilation/compileQuery timed out."))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
