@@ -239,10 +239,13 @@ in local and remote contexts to something that readily exists.")
   "If emacs-codeql detects the presence of a codeql enabled gh cli, use it.")
 
 (defvar codeql-search-paths
-  (list (expand-file-name "~/codeql-home/codeql-repo")
-        (expand-file-name "~/codeql-home/codeql-go")
-        "./")
-  "codeql cli library search paths.")
+  ;; file expansion happens buffer-local so that these work remotely as well
+  (list  "~/codeql-home/codeql-repo"
+         "~/codeql-home/codeql-go"
+         "./")
+  "codeql cli library search paths.
+
+This also gives you search path precedence control if you want to override a config.")
 
 ;; we use buffer-local copies of these so we can play context dependent tricks
 (defvar-local codeql--cli-buffer-local nil)
@@ -259,9 +262,9 @@ in local and remote contexts to something that readily exists.")
 (defvar codeql-max-raw-results 2000
   "The max amount of raw result tuples to render in an org-table.")
 
-(defun codeql--search-paths-from-config ()
+(defun codeql--search-paths-from-codeql-config ()
   ;; see if we have any paths configured in ~/.config/codeql/config, if so, use them as well
-  (let ((config-path (expand-file-name (codeql--tramp-wrap "~/.config/codeql/config"))))
+  (let ((config-path "~/.config/codeql/config"))
     (when-let ((search-paths-string
                 (and (codeql--file-exists-p config-path)
                      (codeql--shell-command-to-string
@@ -271,10 +274,26 @@ in local and remote contexts to something that readily exists.")
              (cadr (split-string (string-trim-right search-paths-string) " +\\|="))))
         ;; make sure all the search paths exist
         (cl-loop with search-paths = (split-string path-config ":")
-                 for path in search-paths do
-                 (unless (codeql--file-exists-p path)
-                   (error (format "Non-existing search path in configuration: %s" path))))
-        (list path-config)))))
+                 for path in search-paths
+                 unless (codeql--file-exists-p path) do
+                 (error (format "Non-existing search path in configuration: %s" path))
+                 collect
+                 (let ((local-search-path
+                        (codeql--tramp-unwrap
+                         (expand-file-name (codeql--tramp-wrap path)))))
+                   (message "Adding %s to search path from codeql cli config." local-search-path)
+                   local-search-path))))))
+
+(defun codeql--search-paths-from-emacs-config ()
+  ;; see if we have any paths configured in ~/.config/codeql/config, if so, use them as well
+  (cl-loop for path in codeql-search-paths
+           unless (codeql--file-exists-p path) do
+           (error (format "Non-existing search path in configuration: %s" path))
+           collect (let ((local-search-path
+                          (codeql--tramp-unwrap
+                           (expand-file-name (codeql--tramp-wrap path)))))
+                     (message "Adding %s to search path from emacs config." local-search-path)
+                     local-search-path)))
 
 (defun codeql--search-path ()
   "Return any currently configured codeql cli search paths."
@@ -334,57 +353,45 @@ in local and remote contexts to something that readily exists.")
   ;; use whatever the current config for codeql-cli and codeql-search-paths is
   (setq codeql--cli-buffer-local codeql-cli)
   (setq codeql--search-paths-buffer-local
-        ;; we'll want both anything that might be in the .config + user customizations
-        (append (codeql--search-paths-from-config)
-                codeql-search-paths))
+        (append
+         ;; emacs-codeql configs always have precedence
+         (codeql--search-paths-from-emacs-config)
+         ;; only add new paths that weren't already configured to prevent double-hits
+         (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
+                  for path in config-paths
+                  unless (member path codeql-search-paths)
+                  collect path)))
+
   ;; decide whether we want to use the gh cli to run our codeql commands
   (when (and codeql-use-gh-codeql-extension-when-available
              (codeql--gh-codeql-cli-available-p))
     (message "Enabling gh cli codeql extension use.")
     (setq codeql--use-gh-cli t)
     (setq codeql--cli-buffer-local "codeql"))
+
   ;; ensure we have somewhere to store result data in both local and remote contexts
   (codeql--init-state-dirs)
-  ;; if we're in a remote context, make sure we know where the cli lives
-  (when (and (file-remote-p default-directory))
-    ;; initialize our results storage if need be
-    ;; make sure we also have gh cli codeql configured remotely
-    (setq codeql--use-gh-cli (and codeql--use-gh-cli (codeql--gh-codeql-cli-available-p)))
-    (if-let ((codeql-path
-              (cond
-               ;; when using the gh cli extension, our "path" is just "codeql"
-               (codeql--use-gh-cli
-                (message "gh cli codeql extension available on remote, using that.")
-                "codeql")
 
-               ;; if not using the gh cli extension, we need an explicit path
-               ;; but lets try to find that automatically before nagging the user
-               (t
-                (if (let ((remote-path (executable-find "codeql" t)))
-                      (when remote-path
-                        (message "Found codeql cli in remote path: %s" remote-path)
-                        (string-trim-right remote-path)))
-                    (read-file-name "Need remote path to codeql cli bin: "
-                                    nil default-directory t))))))
-        (progn
-          ;; NOTE: if you're using the gh cli extension, you need to set your paths
-          ;; I recommend setting your search paths explicitly in a config file using:
-          ;; https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/
-          (setq codeql--search-paths-buffer-local
-                (append
-                 '("./")
-                 (cl-loop while (yes-or-no-p "Add remote search path? (not needed for cli siblings or when .config/codeql/config has search paths)")
-                          collect
-                          (when-let ((path (file-local-name
-                                            (read-file-name "Path: " nil default-directory t))))
-                            (message "Added %s to search paths." path)
-                            path))))
-          ;; all codeql cli commands will also execute in the remote context
-          (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path)))
-      (error "Can not start session in remote context without path to codeql cli.")))
+  ;; if we're in a remote context, make absolutely sure we know where the cli lives
+  (when (and (file-remote-p default-directory))
+    (unless codeql--use-gh-cli
+      ;; no gh cli available ... we still need a path
+      (setq codeql--cli-buffer-local
+            (codeql--tramp-unwrap
+             (if (let ((remote-path (executable-find "codeql" t)))
+                   (when remote-path
+                     (message "Found codeql cli in remote path: %s" remote-path)
+                     (string-trim-right remote-path)))
+                 (read-file-name "Need remote path to codeql cli bin: "
+                                 nil default-directory t))))))
+
+  ;; ensure we were able to resolve _A_ path for the codeql cli local|remote execution
+  (cl-assert codeql--cli-buffer-local t)
+
   ;; do any final init we need here
   (setq codeql--cli-info (codeql--get-cli-version))
   (cl-assert codeql--cli-info t)
+
   ;; ensure we have the eglot LSP client setup
   (when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
     (when (or (not (file-remote-p default-directory))
@@ -619,7 +626,8 @@ in local and remote contexts to something that readily exists.")
   ;; only resolve once for current query buffer
   (unless (and codeql--library-path codeql--dbscheme)
     (message "Resolving query paths.")
-    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --additional-packs=%s --query=%s"
+    ;; we don't need to use --additional-packs since we already offer search path precedence control
+    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --search-path=%s --query=%s"
                         codeql--cli-buffer-local (codeql--search-path)
                         (codeql--tramp-unwrap query-path)))
            (json (codeql--shell-command-to-string
@@ -909,6 +917,8 @@ in local and remote contexts to something that readily exists.")
 
   (let ((database-path
          (or database-path
+             ;; note that this doesn't return plain strings in remote context
+             ;; but rather a tramp file object ...
              (read-file-name "Database: " nil default-directory t))))
 
     ;; resolve and set the dataset folder, we need this when running queries
@@ -1849,7 +1859,21 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
   (if (and codeql--registered-database-history
            (not (eql 0 (hash-table-count codeql--registered-database-history))))
       (let* ((db-keys (vconcat (hash-table-keys codeql--registered-database-history)))
-             (db (completing-read "Recent Databases: " (reverse (append db-keys nil)) nil t)))
+             (db (completing-read
+                  "Recent Databases: "
+                  ;; show remote files only for active remote context
+                  ;; show local files in global local context
+                  (reverse
+                   (append
+                    (cl-loop
+                     ;; file-remote-p returns the tramp prefix of a remote file or nil
+                     with remote-prefix = (file-remote-p default-directory)
+                     for k across db-keys
+                     ;; deal with both strings and symbols
+                     when (equal (file-remote-p k) remote-prefix)
+                     collect k)
+                    nil))
+                  nil t)))
         (when db
           (let ((database-path (gethash db codeql--registered-database-history)))
             (codeql-query-server-register-database database-path))))
