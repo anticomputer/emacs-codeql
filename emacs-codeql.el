@@ -38,94 +38,15 @@
 ;;
 ;; A utility layer that enhances ql-tree-sitter-mode with modern codeql
 ;; ide extension functionality. It requires transient and json-pointer
-;; to function.
+;; to function in a basic capacity but projectile and eglot are highly
+;; recommended for an optimal UX.
 ;;
 ;; While ql-tree-sitter.el does function without emacs-codeql.el, the two
 ;; are assumed to operate in tandem and considered part of the same package.
 
-;; LSP support
-
-;; Additionally it is HIGHLY recommended to install eglot 20220326.2143
-;; or newer from MELPA, as this will also get you full codeql LSP support.
+;; For `emacs-codeql' configuration examples and advice:
 ;;
-;; This recent version is required as it contains basic `workspaceFolders'
-;; support, which is required for the codeql language server to operate
-;; correctly.
-;;
-;; For eglot's new workspaceFolders support to function properly, it is
-;; recommended to also use/enable projectile and add `qlpack.yml' as a
-;; recognized project root marker. This configuration is part of their
-;; default setup of this package, and we consider projectile and eglot
-;; requirements for the best end user experience.
-
-;; Tree sitter support
-
-;; Currently we package our own ql binary artifacts for tree-sitter-langs
-;; pending https://github.com/emacs-tree-sitter/tree-sitter-langs/pull/89
-;; pre-built artifacts are provided for Linux x64 and MacOS x64 systems.
-;;
-;; If you'd like to compile your own version of these artifacts, please use
-;; https://github.com/anticomputer/tree-sitter-langs-1/tree/anticomputer-ql
-
-;;; Getting started:
-
-;; Ensure you have all required dependencies in place, including any
-;; tree-sitter-langs artifacts. By default this package ships with the
-;; required artifacts for Linux x64 and MacOS x64 systems.
-;;
-;; Add the `emacs-codeql' directory to your emacs load-path and:
-;;
-;; (require 'emacs-codeql)
-;;
-;; Prepare a `projectname/qlpack.yaml' QL project as per:
-;; https://codeql.github.com/docs/codeql-cli/about-ql-packs/
-;;
-;; e.g. a simple javascript project might contain a qlpack.yml with:
-;;
-;; ---
-;; library: false
-;; name: testingpack
-;; version: 0.0.1
-;; libraryPathDependencies: codeql/javascript-all
-;;
-;; Create a `projectname/test.ql' file, and start writing queries! To
-;; start running queries, invoke `codeql-transient-binding' and you will be
-;; dropped into a self-explanatory transient ux.
-
-;; Quick-evaluation
-
-;; When there is an active region, emacs-codeql will attempt to quick-eval
-;; the region, otherwise emacs-codeql will attempt a full query. Note that
-;; to quick-eval an entire predicate, the region should contain just the
-;; predicate name, not the entire predicate definition.
-;;
-;; e.g. to quick eval `predicate something() { .. }' you would mark
-;; `something'
-
-;; Supported query types
-
-;; kind: problem, path-problem and raw queries are all fully supported in
-;; terms of result rendering.
-
-;; Result rendering
-
-;; Results are rendered in org-mode. This provides you with a direct path
-;; to turn a result buffer into a living document to support auditing
-;; workflows. path-problem and problem query results are rendered as org trees
-;; and raw results are rendered as org tables.
-
-;; Snippets
-
-;; This package ships a series of `yasnippet' completion templates that
-;; were ported from https://github.com/pwntester/codeql.nvim/tree/master/snippets
-;; add them to your `yasnippet' configuration if you'd like to use them.
-
-;; Trouble shooting
-
-;; If indentation or syntax highlighting does not work, you likely need
-;; to compile your own version of the tree-sitter-ql artifact, please
-;; follow the instructions at:
-;; https://github.com/anticomputer/tree-sitter-langs-1/tree/anticomputer-ql
+;; https://github.com/anticomputer/emacs-codeql
 
 ;;; Disclaimers
 
@@ -168,7 +89,6 @@
 
 ;; * add printAST support
 ;; * add source archive xref and region annotation support
-;; * add database upgrade support
 
 ;;; Code:
 
@@ -240,12 +160,20 @@ in local and remote contexts to something that readily exists.")
 
 (defvar codeql-search-paths
   ;; file expansion happens buffer-local so that these work remotely as well
-  (list  "~/codeql-home/codeql-repo"
-         "~/codeql-home/codeql-go"
-         "./")
-  "codeql cli library search paths.
+  (list "./")
+  "codeql cli library search paths that require search precedence.
 
-This also gives you search path precedence control if you want to override a config.")
+This provides you with search path precedence control and should not be used for
+standard search path configurations.
+
+The default value of . ensures that either the project root, or the CWD of the
+current query file is part of your search path at a higher precedence than the
+configured paths.
+
+Please configure your codeql cli search paths through ~/.config/codeql/config as
+per:
+
+https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/")
 
 ;; we use buffer-local copies of these so we can play context dependent tricks
 (defvar-local codeql--cli-buffer-local nil)
@@ -352,15 +280,6 @@ This also gives you search path precedence control if you want to override a con
   "Set up a codeql buffer context correctly."
   ;; use whatever the current config for codeql-cli and codeql-search-paths is
   (setq codeql--cli-buffer-local codeql-cli)
-  (setq codeql--search-paths-buffer-local
-        (append
-         ;; emacs-codeql configs always have precedence
-         (codeql--search-paths-from-emacs-config)
-         ;; only add new paths that weren't already configured to prevent double-hits
-         (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
-                  for path in config-paths
-                  unless (member path codeql-search-paths)
-                  collect path)))
 
   ;; decide whether we want to use the gh cli to run our codeql commands
   (when (and codeql-use-gh-codeql-extension-when-available
@@ -390,14 +309,43 @@ This also gives you search path precedence control if you want to override a con
 
   ;; do any final init we need here
   (setq codeql--cli-info (codeql--get-cli-version))
+
   (cl-assert codeql--cli-info t)
 
-  ;; ensure we have the eglot LSP client setup
-  (when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
-    (when (or (not (file-remote-p default-directory))
-              ;; XXX: set eglot timeout to a higher value pending this
-              (yes-or-no-p "Remote session! Do you want to use LSP remotely? Warning: this can be very slow!"))
-      (eglot-ensure))))
+  ;; ensure we have the eglot LSP client setup if folks want it
+  ;; catch any errors so we don't fail just because the LSP fails
+  (condition-case nil
+      ;; without eglot we don't get default-directory set from project-root
+      ;; so we back up to a reasonable alternative before resolving paths
+      (if codeql-configure-eglot-lsp
+          (cond
+           ;; do you REALLY want LSP on though?
+           ((file-remote-p (buffer-file-name))
+            (if (yes-or-no-p "[WARNING] Do you want to use LSP remotely? This can be very slow!")
+                (eglot-ensure)
+              ;; nah? ok set a reasonable default-directory
+              (setq default-directory (file-name-directory (buffer-file-name)))))
+           ;; locally we're cool with LSP on
+           ((not (file-remote-p (buffer-file-name)))
+            (eglot-ensure)))
+        ;; no LSP, set a reasonable default-directory
+        (setq default-directory (file-name-directory (buffer-file-name))))
+    ;; no LSP for us due to error
+    (error (progn
+             (message "Ignoring failed LSP initialization and plowing ahead!")
+             (setq default-directory (file-name-directory (buffer-file-name))))))
+
+  ;; now that default-directory points where it should, resolve our search paths
+  (message "Resolving search paths from configuration.")
+  (setq codeql--search-paths-buffer-local
+        (append
+         ;; emacs-codeql configs always have precedence
+         (codeql--search-paths-from-emacs-config)
+         ;; only add new paths that weren't already configured to prevent double-hits
+         (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
+                  for path in config-paths
+                  unless (member path codeql-search-paths)
+                  collect path))))
 
 ;; add a hook that sets up all the things we need to be available in the buffer-local context
 (add-hook 'ql-tree-sitter-mode-hook #'codeql--buffer-local-init-hook)
