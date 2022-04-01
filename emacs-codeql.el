@@ -1401,7 +1401,12 @@ This applies to both normal evaluation and quick evaluation.")
   (when-let (fmt(plist-get codeql--templated-query-formats language))
     (format fmt query-name)))
 
-(defun codeql--run-templated-query (language query-name)
+
+(defun codeql--archive-path-from-org-filename (filename)
+  ;; do a dance to normalize back to the archive root relative path for this filename
+  (format "/%s" (cadr (split-string filename (format "%s/*" codeql--database-source-archive-root)))))
+
+(defun codeql--run-templated-query (language query-name filename)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert codeql--active-database t)
 
@@ -1411,7 +1416,13 @@ This applies to both normal evaluation and quick evaluation.")
              when (codeql--file-exists-p full-path)
              do
              (message "Resolved templated query %s to %s" query-name full-path)
-             (codeql--query-server-run-query-from-path full-path nil)
+             (let ((template-values
+                    `(:selectedSourceFile
+                      (:values
+                       (:tuples
+                        [(:stringValue
+                          ,(codeql--archive-path-from-org-filename filename))])))))
+               (codeql--query-server-run-query-from-path full-path nil template-values))
              ;; respect search precedence and only return from first find
              (cl-return))))
 
@@ -1424,10 +1435,6 @@ This applies to both normal evaluation and quick evaluation.")
        (codeql--tramp-unwrap path))
     t))
 
-(defun codeql--debug-template-queries ()
-  (interactive)
-  (codeql--run-templated-query :javascript "localDefinitions"))
-
 ;; custom org link so we can do voodoo when C-c C-o on a codeql: link
 
 ;; XXX: add an org link type of "codeql:" with associated handlers
@@ -1439,13 +1446,14 @@ This applies to both normal evaluation and quick evaluation.")
   (cl-multiple-value-bind (filename line) (split-string filename "::")
     (when (bound-and-true-p codeql--org-parent-buffer)
       (with-current-buffer codeql--org-parent-buffer
-        (message "XXX: arrived.")
         (when codeql--active-database-language
           ;; we have an active database in our parent buffer context
           ;; so we'll use that to resolve definitions and references
           (let ((language (intern (format ":%s" codeql--active-database-language))))
-            (message "ZOMG IT WORKED")
-            (codeql--run-templated-query language "localDefinitions")))))
+            (when (codeql--database-src-path-p filename)
+              (message "XXX: handling a file from database source archive")
+              (codeql--run-templated-query language "localDefinitions" filename)
+              (codeql--run-templated-query language "localReferences" filename))))))
     (org-open-file filename t (if line (string-to-number line) line))))
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
@@ -1699,7 +1707,7 @@ This applies to both normal evaluation and quick evaluation.")
                 (let ((rendered (codeql--org-render-raw-query-results org-data footer buffer-context)))
                   (with-temp-file (format "%s.org" bqrs-path) (insert rendered))))))))))))
 
-(defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval)
+(defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval &optional template-values)
   "Request a query evaluation from the query server."
   (with-current-buffer buffer-context
     (let ((run-query-params
@@ -1712,11 +1720,7 @@ This applies to both normal evaluation and quick evaluation.")
               (:resultsPath ,(codeql--tramp-unwrap bqrs-path)
                             :qlo ,(format "file:%s" (codeql--tramp-unwrap qlo-path))
                             :allowUnknownTemplates t
-                            ;; XXX: figure out how to set templateValues properly
-                            ;; XXX: we need these that we can run templated queries
-                            ;; XXX: to get the refs/deps for source code browsing
-                            ;; XXX: and printAST uses that crud as well ...
-                            :templateValues nil
+                            :templateValues ,template-values
                             :id 0
                             :timeoutSecs 0)
               :stopOnError :json-false
@@ -1772,7 +1776,7 @@ This applies to both normal evaluation and quick evaluation.")
          (message ":evaluation/runQueries timed out."))
        :deferred :evaluation/runQueries))))
 
-(defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval)
+(defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval &optional template-values)
   "Request query compilation from the query server."
 
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -1829,7 +1833,8 @@ This applies to both normal evaluation and quick evaluation.")
                      (query-path query-path)
                      (query-info query-info)
                      (db-path db-path)
-                     (quick-eval quick-eval))
+                     (quick-eval quick-eval)
+                     (template-values template-values))
          (jsonrpc-lambda (&key messages &allow-other-keys)
            (message "Compilation completed, checking results.")
            (let ((abort-run-query nil))
@@ -1846,7 +1851,8 @@ This applies to both normal evaluation and quick evaluation.")
                                                  bqrs-path query-path
                                                  query-info
                                                  db-path
-                                                 quick-eval)))))
+                                                 quick-eval
+                                                 template-values)))))
        :timeout-fn
        (jsonrpc-lambda (&key _ &allow-other-keys)
          (message ":compilation/compileQuery timed out."))
@@ -1855,7 +1861,7 @@ This applies to both normal evaluation and quick evaluation.")
          (message "Error %s: %s %s" code message _data))
        :deferred :compilation/compileQuery))))
 
-(defun codeql--query-server-run-query-from-path (query-path quick-eval)
+(defun codeql--query-server-run-query-from-path (query-path quick-eval &optional template-values)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert codeql--active-database t)
   (cl-assert (codeql--resolve-query-paths query-path) t)
@@ -1880,7 +1886,8 @@ This applies to both normal evaluation and quick evaluation.")
                                                   query-info
                                                   db-path
                                                   db-scheme
-                                                  quick-eval)))
+                                                  quick-eval
+                                                  template-values)))
 
 (defun codeql-query-server-run-query ()
   "Run a query or quick eval a query region.
