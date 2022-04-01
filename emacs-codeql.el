@@ -495,6 +495,15 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 (defvar-local codeql--library-path nil)
 (defvar-local codeql--dbscheme nil)
 
+(defun codeql--reset-database-state ()
+  "Clear out all the buffer-local database state."
+  (setq codeql--active-database nil)
+  (setq codeql--active-database-language nil)
+  (setq codeql--database-dataset-folder nil)
+  (setq codeql--database-source-location-prefix nil)
+  (setq codeql--database-source-archive-root nil)
+  (setq codeql--database-source-archive-zip nil))
+
 ;; local query id state
 (defvar-local codeql--query-server-client-id 0)
 (defvar-local codeql--query-server-progress-id 0)
@@ -506,15 +515,25 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 ;; local query history
 (defvar-local codeql--completed-query-history nil)
 
+;; local caches for database source archive files defs/refs/ast
+(defvar-local codeql--definitions-cache nil)
+(defvar-local codeql--references-cache nil)
+(defvar-local codeql--ast-cache nil)
+
+(defun codeql--reset-def-ref-ast-cache ()
+  "Clear out all the buffer-local ref/def/ast caches."
+  (setq codeql--definitions-cache nil)
+  (setq codeql--references-cache nil)
+  (setq codeql--ast-cache nil))
+
+
 (defun codeql--query-server-on-shutdown (obj)
   ;; remove any active database from global database state
   (when codeql--database-dataset-folder
     (codeql--active-datasets-del codeql--database-dataset-folder))
   ;; clear out the buffer-local server and database state
   (setq codeql--query-server nil)
-  (setq codeql--active-database nil)
-  (setq codeql--active-database-language nil)
-  (setq codeql--database-dataset-folder nil)
+  (codeql--reset-database-state)
   (message "Shut down query server and cleared active database."))
 
 (defun codeql--query-server-next-client-id ()
@@ -964,12 +983,8 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
      (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
        ;;(message "Success: %s" registeredDatabases)
        (with-current-buffer buffer
-         (setq codeql--active-database nil)
-         (setq codeql--active-database-language nil)
-         (setq codeql--database-dataset-folder nil)
-         (setq codeql--database-source-location-prefix nil)
-         (setq codeql--database-source-archive-root nil)
-         (setq codeql--database-source-archive-zip nil)
+         (codeql--reset-def-ref-ast-cache)
+         (codeql--reset-database-state)
          (message "Deregistered: %s" database-dataset-folder))))
    :error-fn
    (jsonrpc-lambda (&key code message _data &allow-other-keys)
@@ -1439,9 +1454,6 @@ This applies to both normal evaluation and quick evaluation.")
 ;; XXX: add an org link type of "codeql:" with associated handlers
 (require 'ol)
 
-(defvar-local codeql--definitions-cache nil)
-(defvar-local codeql--references-cache nil)
-
 ;; XXX: build a hashmap of source-file to defs/refs or something?
 ;; XXX: and then make that available in the parent context as cache?
 (defun codeql--org-open-file-link (filename)
@@ -1454,8 +1466,11 @@ This applies to both normal evaluation and quick evaluation.")
           (let ((language (intern (format ":%s" codeql--active-database-language))))
             (when (codeql--database-src-path-p filename)
               (message "XXX: handling a file from database source archive")
-              (codeql--run-templated-query language "localDefinitions" filename)
-              (codeql--run-templated-query language "localReferences" filename))))))
+              ;; don't process more than once, caches are buffer local
+              (unless (gethash filename codeql--definitions-cache)
+                (codeql--run-templated-query language "localDefinitions" filename))
+              (unless (gethash filename codeql--references-cache)
+                (codeql--run-templated-query language "localReferences" filename)))))))
     (org-open-file filename t (if line (string-to-number line) line))))
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
@@ -1476,17 +1491,20 @@ This applies to both normal evaluation and quick evaluation.")
 (defun codeql--process-defs (json filename)
   (message "XXX: processing definitions for: %s" filename)
   (unless codeql--definitions-cache
-    (setq codeql--definitions-cache (make-hash-table :test #'equal))))
+    (setq codeql--definitions-cache (make-hash-table :test #'equal)))
+  (puthash filename json codeql--definitions-cache))
 
 (defun codeql--process-refs (json filename)
   (message "XXX: processing references for: %s" filename)
   (unless codeql--references-cache
-    (setq codeql--references-cache (make-hash-table :test #'equal))))
+    (setq codeql--references-cache (make-hash-table :test #'equal)))
+  (puthash filename json codeql--references-cache))
 
 (defun codeql--print-ast (json filename)
   (message "XXX: processing AST for: %s" filename)
   (unless codeql--ast-cache
-    (setq codeql--ast-cache (make-hash-table :test #'equal))))
+    (setq codeql--ast-cache (make-hash-table :test #'equal)))
+  (puthash filename json codeql--ast-cache))
 
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context &optional src-filename)
