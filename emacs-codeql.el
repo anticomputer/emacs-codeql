@@ -1387,15 +1387,32 @@ This applies to both normal evaluation and quick evaluation.")
   (when-let ((bqrs-info (codeql--bqrs-info bqrs-path)))
     (let ((result-sets (json-pointer-get bqrs-info "/result-sets"))
           (compatible-query-kinds (json-pointer-get bqrs-info "compatible-query-kinds"))
-          (footer (concat (format
-                           (mapconcat #'identity '("#+QUERY_TIME: %s"
-                                                   "#+BQRS_PATH: %s"
-                                                   "#+QUERY_PATH: %s"
-                                                   "#+DB_PATH: %s"
-                                                   "#+BEGIN_CODEQL_VERSION"
-                                                   "%s"
-                                                   "#+END_CODEQL_VERSION") "\n")
-                           (current-time-string) bqrs-path query-path db-path codeql--cli-info) "\n")))
+          (footer
+           (concat
+            ;; include query meta if we have some
+            (if (and query-name query-kind query-id)
+                (format
+                 (mapconcat #'identity '("#+QUERY_NAME: %s"
+                                         "#+QUERY_KIND: %s"
+                                         "#+QUERY_ID: %s" "") "\n")
+                 query-name
+                 query-kind
+                 query-id)
+              "")
+            ;; info we always want
+            (format
+             (mapconcat #'identity '("#+QUERY_TIME: %s"
+                                     "#+BQRS_PATH: %s"
+                                     "#+QUERY_PATH: %s"
+                                     "#+DB_PATH: %s"
+                                     "#+BEGIN_CODEQL_VERSION"
+                                     "%s"
+                                     "#+END_CODEQL_VERSION") "\n")
+             (current-time-string)
+             bqrs-path
+             query-path
+             db-path
+             codeql--cli-info) "\n")))
       ;; parse results according to the query meta data
       (cond
 
