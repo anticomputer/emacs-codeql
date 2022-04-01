@@ -466,7 +466,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   "A hash map of all registered databases across all sessions.")
 
 (defun codeql--active-datasets-init ()
-  (setq codeql--active-datasets (make-hash-table :test 'equal)))
+  (setq codeql--active-datasets (make-hash-table :test #'equal)))
 
 (defun codeql--active-datasets-add (database-dataset buffer)
   (puthash database-dataset buffer codeql--active-datasets))
@@ -870,7 +870,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
   ;; init the database history if need be
   (unless codeql--registered-database-history
-    (setq codeql--registered-database-history (make-hash-table :test 'equal)))
+    (setq codeql--registered-database-history (make-hash-table :test #'equal)))
 
   (let ((database-path
          (or database-path
@@ -1401,7 +1401,6 @@ This applies to both normal evaluation and quick evaluation.")
   (when-let (fmt(plist-get codeql--templated-query-formats language))
     (format fmt query-name)))
 
-
 (defun codeql--archive-path-from-org-filename (filename)
   ;; do a dance to normalize back to the archive root relative path for this filename
   (format "/%s" (cadr (split-string filename (format "%s/*" codeql--database-source-archive-root)))))
@@ -1422,7 +1421,7 @@ This applies to both normal evaluation and quick evaluation.")
                        (:tuples
                         [(:stringValue
                           ,(codeql--archive-path-from-org-filename filename))])))))
-               (codeql--query-server-run-query-from-path full-path nil template-values))
+               (codeql--query-server-run-query-from-path full-path nil template-values filename))
              ;; respect search precedence and only return from first find
              (cl-return))))
 
@@ -1439,6 +1438,9 @@ This applies to both normal evaluation and quick evaluation.")
 
 ;; XXX: add an org link type of "codeql:" with associated handlers
 (require 'ol)
+
+(defvar-local codeql--definitions-cache nil)
+(defvar-local codeql--references-cache nil)
 
 ;; XXX: build a hashmap of source-file to defs/refs or something?
 ;; XXX: and then make that available in the parent context as cache?
@@ -1471,17 +1473,23 @@ This applies to both normal evaluation and quick evaluation.")
   "A format list for finding templated queries by name")
 
 
-(defun codeql--process-defs (json)
-  (message "XXX: processing definitions."))
+(defun codeql--process-defs (json filename)
+  (message "XXX: processing definitions for: %s" filename)
+  (unless codeql--definitions-cache
+    (setq codeql--definitions-cache (make-hash-table :test #'equal))))
 
-(defun codeql--process-refs (json)
-  (message "XXX: processing references."))
+(defun codeql--process-refs (json filename)
+  (message "XXX: processing references for: %s" filename)
+  (unless codeql--references-cache
+    (setq codeql--references-cache (make-hash-table :test #'equal))))
 
-(defun codeql--print-ast (json)
-  (message "XXX: processing ast."))
+(defun codeql--print-ast (json filename)
+  (message "XXX: processing AST for: %s" filename)
+  (unless codeql--ast-cache
+    (setq codeql--ast-cache (make-hash-table :test #'equal))))
 
 ;; abandon hope, all ye who enter here ...
-(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context)
+(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context &optional src-filename)
   "Parse the results at BQRS-PATH and render them accordingly to the user."
 
   (message "Loading bqrs from %s (name: %s kind: %s id: %s)"
@@ -1535,11 +1543,11 @@ This applies to both normal evaluation and quick evaluation.")
           (when json
             (message "XXX: parsed a templated query! DO SOMETHING BOUT IT!")
             (cond ((string-match "/localDefinitions.ql$" query-path)
-                   (codeql--process-defs json))
+                   (codeql--process-defs json src-filename))
                   ((string-match "/localReferences.ql$" query-path)
-                   (codeql--process-refs json))
+                   (codeql--process-refs json src-filename))
                   ((string-match "/printAst.ql$" query-path)
-                   (codeql--print-ast json))))))
+                   (codeql--print-ast json src-filename))))))
 
        ;; SARIF parsing
        ;;
@@ -1707,7 +1715,7 @@ This applies to both normal evaluation and quick evaluation.")
                 (let ((rendered (codeql--org-render-raw-query-results org-data footer buffer-context)))
                   (with-temp-file (format "%s.org" bqrs-path) (insert rendered))))))))))))
 
-(defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval &optional template-values)
+(defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval &optional template-values src-filename)
   "Request a query evaluation from the query server."
   (with-current-buffer buffer-context
     (let ((run-query-params
@@ -1737,7 +1745,8 @@ This applies to both normal evaluation and quick evaluation.")
                      (bqrs-path bqrs-path)
                      (query-path query-path)
                      (db-path db-path)
-                     (quick-eval quick-eval))
+                     (quick-eval quick-eval)
+                     (src-filename src-filename))
          (jsonrpc-lambda (&rest _)
            (message "Query run completed, checking results.")
            ;; if size is > 0 then we have results to deal with
@@ -1766,17 +1775,18 @@ This applies to both normal evaluation and quick evaluation.")
                                         :id ,id)
                           codeql--completed-query-history))
                        ;; display results
-                       (codeql-load-bqrs bqrs-path query-path db-path name kind id buffer-context))))
+                       (codeql-load-bqrs bqrs-path query-path db-path name kind id buffer-context src-filename))))
                (message "No query results in %s!" bqrs-path)))))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
        :timeout-fn
-       (jsonrpc-lambda (&key _ &allow-other-keys)
+       (jsonrpc-lambda (&rest _)
          (message ":evaluation/runQueries timed out."))
        :deferred :evaluation/runQueries))))
 
-(defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval &optional template-values)
+;; XXX: too many args, move all of those to passing a struct around instead
+(defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval &optional template-values src-filename)
   "Request query compilation from the query server."
 
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -1834,7 +1844,8 @@ This applies to both normal evaluation and quick evaluation.")
                      (query-info query-info)
                      (db-path db-path)
                      (quick-eval quick-eval)
-                     (template-values template-values))
+                     (template-values template-values)
+                     (src-filename src-filename))
          (jsonrpc-lambda (&key messages &allow-other-keys)
            (message "Compilation completed, checking results.")
            (let ((abort-run-query nil))
@@ -1852,16 +1863,17 @@ This applies to both normal evaluation and quick evaluation.")
                                                  query-info
                                                  db-path
                                                  quick-eval
-                                                 template-values)))))
+                                                 template-values
+                                                 src-filename)))))
        :timeout-fn
-       (jsonrpc-lambda (&key _ &allow-other-keys)
+       (jsonrpc-lambda (&rest _)
          (message ":compilation/compileQuery timed out."))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
        :deferred :compilation/compileQuery))))
 
-(defun codeql--query-server-run-query-from-path (query-path quick-eval &optional template-values)
+(defun codeql--query-server-run-query-from-path (query-path quick-eval &optional template-values src-filename)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert codeql--active-database t)
   (cl-assert (codeql--resolve-query-paths query-path) t)
@@ -1887,7 +1899,8 @@ This applies to both normal evaluation and quick evaluation.")
                                                   db-path
                                                   db-scheme
                                                   quick-eval
-                                                  template-values)))
+                                                  template-values
+                                                  src-filename)))
 
 (defun codeql-query-server-run-query ()
   "Run a query or quick eval a query region.
@@ -1901,7 +1914,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
 
   ;; init the query history if need be
   (unless codeql--completed-query-history
-    (setq codeql--completed-query-history (make-hash-table :test 'equal)))
+    (setq codeql--completed-query-history (make-hash-table :test #'equal)))
 
   (if codeql--query-server
       (let* ((query-path (buffer-file-name))
