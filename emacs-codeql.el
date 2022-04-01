@@ -1376,6 +1376,45 @@ This applies to both normal evaluation and quick evaluation.")
              ;; ok we have a path-node, add it to the path list
              path-node)))
 
+(defvar codeql--templated-query-formats
+  (list :c           "cpp/ql/src/%s.ql"
+        :cpp         "cpp/ql/src/%s.ql"
+        :java        "java/ql/src/%s.ql"
+        :cs          "csharp/ql/src/%s.ql"
+        :javascript  "javascript/ql/src/%s.ql"
+        :python      "python/ql/src/%s.ql"
+        :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
+        :ruby        "ruby/ql/src/ide-contextual-queries/%s.ql"
+        :go          "ql/lib/%s.ql")
+  "A format list for finding templated queries by name")
+
+(defun codeql--templated-query-path (language query-name)
+  "Return the relative path for a QUERY-NAME of type LANGUAGE."
+  (when-let (fmt(plist-get codeql--templated-query-formats language))
+    (format fmt query-name)))
+
+(defun codeql--run-templated-query (language query-name)
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (cl-assert codeql--active-database t)
+
+  (when-let ((query-path (codeql--templated-query-path language query-name)))
+    (cl-loop for search-path in codeql--search-paths-buffer-local
+             for full-path = (format "%s/%s" search-path query-path)
+             when (codeql--file-exists-p full-path)
+             do
+             (message "Resolved templated query %s to %s" query-name full-path)
+             (codeql--query-server-run-query-from-path full-path nil)
+             ;; respect search precedence and only return from first find
+             (cl-return))))
+
+(defun codeql--debug-template-queries ()
+  (interactive)
+  (codeql--run-templated-query :javascript "localDefinitions"))
+
+(defun codeql--process-defs (json))
+(defun codeql--process-refs (json))
+(defun codeql--print-ast (json))
+
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id)
   "Parse the results at BQRS-PATH and render them accordingly to the user."
@@ -1421,11 +1460,21 @@ This applies to both normal evaluation and quick evaluation.")
        ;; AST parsing
        ;; process AST's, definitions, and references
 
-       ((or (string-match "/localDefinitions.ql" query-path)
-            (string-match "/localReferences.ql" query-path)
-            (string-match "/printAst.ql" query-path))
-        ;; XXX: TODO
-        (message "XXX: ref/def/ast handling"))
+       ((or (string-match "/localDefinitions.ql$" query-path)
+            (string-match "/localReferences.ql$" query-path)
+            (string-match "/printAst.ql$" query-path))
+        (let* ((json (json-parse-string
+                      (codeql--bqrs-to-json bqrs-path "id,url,string")
+                      ;; json-pointer-get wants list based json
+                      :object-type 'alist)))
+          (when json
+            (message "XXX: parsed a templated query! DO SOMETHING BOUT IT!")
+            (cond ((string-match "/localDefinitions.ql$" query-path)
+                   (codeql--process-defs json))
+                  ((string-match "/localReferences.ql$" query-path)
+                   (codeql--process-refs json))
+                  ((string-match "/printAst.ql$" query-path)
+                   (codeql--print-ast json))))))
 
        ;; SARIF parsing
        ;;
@@ -1666,7 +1715,7 @@ This applies to both normal evaluation and quick evaluation.")
          (message ":evaluation/runQueries timed out."))
        :deferred :evaluation/runQueries))))
 
-(defun codeql--query-server-request-compile (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval)
+(defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval)
   "Request query compilation from the query server."
 
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -1749,6 +1798,33 @@ This applies to both normal evaluation and quick evaluation.")
          (message "Error %s: %s %s" code message _data))
        :deferred :compilation/compileQuery))))
 
+(defun codeql--query-server-run-query-from-path (query-path quick-eval)
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (cl-assert codeql--active-database t)
+  (cl-assert (codeql--resolve-query-paths query-path) t)
+
+  (let* ((qlo-path
+          (let ((temporary-file-directory (codeql--tramp-wrap codeql-tmp-dir)))
+            (make-temp-file "qlo" nil ".qlo")))
+         (bqrs-path
+          (let ((temporary-file-directory (codeql--tramp-wrap codeql-results-dir)))
+            (make-temp-file "bqrs" nil ".bqrs")))
+         (library-path codeql--library-path)
+         (db-scheme codeql--dbscheme)
+         (db-path (format "%s/" (directory-file-name codeql--active-database)))
+         (query-info (codeql--query-info query-path)))
+
+    ;; request a query compilation, its success callback will then request a query run
+    (codeql--query-server-request-compile-and-run (current-buffer)
+                                                  library-path
+                                                  qlo-path
+                                                  bqrs-path
+                                                  query-path
+                                                  query-info
+                                                  db-path
+                                                  db-scheme
+                                                  quick-eval)))
+
 (defun codeql-query-server-run-query ()
   "Run a query or quick eval a query region.
 
@@ -1758,8 +1834,6 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
 "
   (interactive)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (cl-assert codeql--active-database t)
-  (cl-assert (codeql--resolve-query-paths (buffer-file-name)) t)
 
   ;; init the query history if need be
   (unless codeql--completed-query-history
@@ -1767,17 +1841,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
 
   (if codeql--query-server
       (let* ((query-path (buffer-file-name))
-             (qlo-path
-              (let ((temporary-file-directory (codeql--tramp-wrap codeql-tmp-dir)))
-                (make-temp-file "qlo" nil ".qlo")))
-             (bqrs-path
-              (let ((temporary-file-directory (codeql--tramp-wrap codeql-results-dir)))
-                (make-temp-file "bqrs" nil ".bqrs")))
-             (library-path codeql--library-path)
-             (db-scheme codeql--dbscheme)
-             (db-path (format "%s/" (directory-file-name codeql--active-database)))
-             (quick-eval (if (use-region-p) t nil))
-             (query-info (codeql--query-info query-path)))
+             (quick-eval (if (use-region-p) t nil)))
 
         ;; make sure we save the query before running it
         (when (or codeql-run-query-always-save
@@ -1785,16 +1849,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                        (y-or-n-p "Query was not saved prior to evaluation, save now?")))
           (save-buffer))
 
-        ;; request a query compilation, its success callback will then request a query run
-        (codeql--query-server-request-compile (current-buffer)
-                                              library-path
-                                              qlo-path
-                                              bqrs-path
-                                              query-path
-                                              query-info
-                                              db-path
-                                              db-scheme
-                                              quick-eval))
+        (codeql--query-server-run-query-from-path query-path quick-eval))
     (message "No query server started.")))
 
 (defun codeql-query-history ()
