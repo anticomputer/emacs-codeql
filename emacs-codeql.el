@@ -240,12 +240,20 @@ in local and remote contexts to something that readily exists.")
 
 (defvar codeql-search-paths
   ;; file expansion happens buffer-local so that these work remotely as well
-  (list  "~/codeql-home/codeql-repo"
-         "~/codeql-home/codeql-go"
-         "./")
-  "codeql cli library search paths.
+  (list "./")
+  "codeql cli library search paths that require search precedence.
 
-This also gives you search path precedence control if you want to override a config.")
+This provides you with search path precedence control and should not be used for
+standard search path configurations.
+
+The default value of . ensures that either the project root, or the CWD of the
+current query file is part of your search path at a higher precedence than the
+configured paths.
+
+Please configure your codeql cli search paths through ~/.config/codeql/config as
+per:
+
+https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/")
 
 ;; we use buffer-local copies of these so we can play context dependent tricks
 (defvar-local codeql--cli-buffer-local nil)
@@ -352,15 +360,6 @@ This also gives you search path precedence control if you want to override a con
   "Set up a codeql buffer context correctly."
   ;; use whatever the current config for codeql-cli and codeql-search-paths is
   (setq codeql--cli-buffer-local codeql-cli)
-  (setq codeql--search-paths-buffer-local
-        (append
-         ;; emacs-codeql configs always have precedence
-         (codeql--search-paths-from-emacs-config)
-         ;; only add new paths that weren't already configured to prevent double-hits
-         (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
-                  for path in config-paths
-                  unless (member path codeql-search-paths)
-                  collect path)))
 
   ;; decide whether we want to use the gh cli to run our codeql commands
   (when (and codeql-use-gh-codeql-extension-when-available
@@ -390,14 +389,43 @@ This also gives you search path precedence control if you want to override a con
 
   ;; do any final init we need here
   (setq codeql--cli-info (codeql--get-cli-version))
+
   (cl-assert codeql--cli-info t)
 
-  ;; ensure we have the eglot LSP client setup
-  (when (and codeql--cli-buffer-local codeql-configure-eglot-lsp)
-    (when (or (not (file-remote-p default-directory))
-              ;; XXX: set eglot timeout to a higher value pending this
-              (yes-or-no-p "Remote session! Do you want to use LSP remotely? Warning: this can be very slow!"))
-      (eglot-ensure))))
+  ;; ensure we have the eglot LSP client setup if folks want it
+  ;; catch any errors so we don't fail just because the LSP fails
+  (condition-case nil
+      ;; without eglot we don't get default-directory set from project-root
+      ;; so we back up to a reasonable alternative before resolving paths
+      (if codeql-configure-eglot-lsp
+          (cond
+           ;; do you REALLY want LSP on though?
+           ((file-remote-p (buffer-file-name))
+            (if (yes-or-no-p "[WARNING] Do you want to use LSP remotely? This can be very slow!")
+                (eglot-ensure)
+              ;; nah? ok set a reasonable default-directory
+              (setq default-directory (file-name-directory (buffer-file-name)))))
+           ;; locally we're cool with LSP on
+           ((not (file-remote-p (buffer-file-name)))
+            (eglot-ensure)))
+        ;; no LSP, set a reasonable default-directory
+        (setq default-directory (file-name-directory (buffer-file-name))))
+    ;; no LSP for us due to error
+    (error (progn
+             (message "Ignoring failed LSP initialization and plowing ahead!")
+             (setq default-directory (file-name-directory (buffer-file-name))))))
+
+  ;; now that default-directory points where it should, resolve our search paths
+  (message "Resolving search paths from configuration.")
+  (setq codeql--search-paths-buffer-local
+        (append
+         ;; emacs-codeql configs always have precedence
+         (codeql--search-paths-from-emacs-config)
+         ;; only add new paths that weren't already configured to prevent double-hits
+         (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
+                  for path in config-paths
+                  unless (member path codeql-search-paths)
+                  collect path))))
 
 ;; add a hook that sets up all the things we need to be available in the buffer-local context
 (add-hook 'ql-tree-sitter-mode-hook #'codeql--buffer-local-init-hook)
