@@ -295,14 +295,13 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   (when (and (file-remote-p default-directory))
     (unless codeql--use-gh-cli
       ;; no gh cli available ... we still need a path
-      (setq codeql--cli-buffer-local
-            (codeql--tramp-unwrap
-             (if (let ((remote-path (executable-find "codeql" t)))
-                   (when remote-path
-                     (message "Found codeql cli in remote path: %s" remote-path)
-                     (string-trim-right remote-path)))
-                 (read-file-name "Need remote path to codeql cli bin: "
-                                 nil default-directory t))))))
+      (let ((remote-path
+             (string-trim-right
+              (or (executable-find "codeql" t)
+                  (read-file-name "Need remote path to codeql cli bin: "
+                                  nil default-directory t)))))
+        (message "Setting remote codeql cli path: %s" remote-path)
+        (setq codeql--cli-buffer-local (codeql--tramp-unwrap remote-path)))))
 
   ;; ensure we were able to resolve _A_ path for the codeql cli local|remote execution
   (cl-assert codeql--cli-buffer-local t)
@@ -552,12 +551,13 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
                ;; process-file will work in remote context pending default-directory
                (exit-code
                 (apply 'process-file
-                       shell-file-name
+                       ;; rely on something that's ALWAYS there (hopefully)
+                       "/bin/sh"
                        nil
                        ;; redirect stderr here somewhere if we need to
                        `(,stdout-buffer nil)
                        nil
-                       shell-command-switch
+                       "-c"
                        (list cmd)))
                (stdout-data
                 (when (eql exit-code 0)
