@@ -499,6 +499,9 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 (defvar-local codeql--query-server-progress-id 0)
 (defvar-local codeql--query-server-evaluate-id 0)
 
+;; local org state
+(defvar-local codeql--org-parent-buffer nil)
+
 ;; local query history
 (defvar-local codeql--completed-query-history nil)
 
@@ -1071,8 +1074,9 @@ This applies to both normal evaluation and quick evaluation.")
         (cl-assert (codeql--file-exists-p codeql--database-source-archive-root) t)
         (let ((filename (codeql--result-node-filename node)))
           ;; XXX: to alert on any wacky file schemes we might need to support
+          ;; we implement a custom org link type so we can add extra sauce on link follow
           (when filename (cl-assert (not (string-match ":" filename)))))
-        (let ((link (format "file:%s/%s::%s"
+        (let ((link (format "codeql:%s/%s::%s"
                             ;; we've extracted to the expected location
                             (codeql--tramp-wrap codeql--database-source-archive-root)
                             (codeql--result-node-filename node)
@@ -1222,7 +1226,7 @@ This applies to both normal evaluation and quick evaluation.")
       ;; return final org data
       (buffer-string))))
 
-(defun codeql--org-render-sarif-results (org-data &optional footer)
+(defun codeql--org-render-sarif-results (org-data &optional footer parent-buffer)
   "Render ORG-DATA including an optional FOOTER."
   ;; sarif results are org trees
   (let ((buffer (generate-new-buffer "* codeql-org-results *")))
@@ -1236,10 +1240,13 @@ This applies to both normal evaluation and quick evaluation.")
       (goto-char (point-min))
       (setq buffer-read-only t)
       (save-excursion
+        ;; so we can make the query server context available to org links
+        (when parent-buffer
+          (setq-local codeql--org-parent-buffer parent-buffer))
         (switch-to-buffer-other-window buffer))
       (buffer-string))))
 
-(defun codeql--org-render-raw-query-results (org-data &optional footer)
+(defun codeql--org-render-raw-query-results (org-data &optional footer parent-buffer)
   "Render ORG-DATA including an optional FOOTER."
   ;; raw results are org tables
   (let ((buffer (generate-new-buffer "* codeql-org-results *")))
@@ -1256,6 +1263,9 @@ This applies to both normal evaluation and quick evaluation.")
       (goto-char (point-min))
       (setq buffer-read-only t)
       (save-excursion
+        ;; so we can make the query server context available to org links
+        (when parent-buffer
+          (setq-local codeql--org-parent-buffer parent-buffer))
         (switch-to-buffer-other-window buffer))
       (buffer-string))))
 
@@ -1376,6 +1386,25 @@ This applies to both normal evaluation and quick evaluation.")
              ;; ok we have a path-node, add it to the path list
              path-node)))
 
+;; XXX: add an org link type of "codeql:" with associated handlers
+(require 'ol)
+
+(defun codeql--org-open-file-link (filename)
+  (message "XXX: entering with %s" filename)
+  ;; this works even if there's no split with "::" in which  case filename will be a value and line will be nil
+  (cl-multiple-value-bind (filename line) (split-string filename "::")
+    ;; check if we have an active parent buffer set from the session
+    ;; codeql--org-parent-buffer is the ql-tree-sitter-mode buffer
+    ;; from which this org link was generated in the session.
+    (message "XXX: %s" codeql--org-parent-buffer)
+    (when (bound-and-true-p codeql--org-parent-buffer)
+      (with-current-buffer codeql--org-parent-buffer
+        ;; do whatever we need to do in buffer local context below
+        (message "ZOMG IT WORKED")))
+    (org-open-file filename t (if line (string-to-number line) line))))
+
+(org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
+
 (defvar codeql--templated-query-formats
   (list :c           "cpp/ql/src/%s.ql"
         :cpp         "cpp/ql/src/%s.ql"
@@ -1407,6 +1436,15 @@ This applies to both normal evaluation and quick evaluation.")
              ;; respect search precedence and only return from first find
              (cl-return))))
 
+(defun codeql--database-src-path-p (path)
+  (when
+      (string-match
+       (format "^%s/+%s"
+               codeql--database-source-archive-root
+               codeql--database-source-location-prefix)
+       (codeql--tramp-unwrap path))
+    t))
+
 (defun codeql--debug-template-queries ()
   (interactive)
   (codeql--run-templated-query :javascript "localDefinitions"))
@@ -1416,7 +1454,7 @@ This applies to both normal evaluation and quick evaluation.")
 (defun codeql--print-ast (json))
 
 ;; abandon hope, all ye who enter here ...
-(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id)
+(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context)
   "Parse the results at BQRS-PATH and render them accordingly to the user."
 
   (message "Loading bqrs from %s (name: %s kind: %s id: %s)"
@@ -1559,7 +1597,7 @@ This applies to both normal evaluation and quick evaluation.")
                    (with-temp-buffer
                      (cl-loop for org-data in org-results do (insert org-data))
                      (let ((rendered
-                            (codeql--org-render-sarif-results (buffer-string) footer)))
+                            (codeql--org-render-sarif-results (buffer-string) footer buffer-context)))
                        ;; save off the fully rendered version for speedy re-loads
                        (with-temp-file (format "%s.org" bqrs-path)
                          (insert rendered)))))))))))
@@ -1639,7 +1677,7 @@ This applies to both normal evaluation and quick evaluation.")
                    (codeql--query-results-to-org
                     codeql--query-results 'raw columns)))
               (when org-data
-                (let ((rendered (codeql--org-render-raw-query-results org-data footer)))
+                (let ((rendered (codeql--org-render-raw-query-results org-data footer buffer-context)))
                   (with-temp-file (format "%s.org" bqrs-path) (insert rendered))))))))))))
 
 (defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval)
@@ -1705,7 +1743,7 @@ This applies to both normal evaluation and quick evaluation.")
                                         :id ,id)
                           codeql--completed-query-history))
                        ;; display results
-                       (codeql-load-bqrs bqrs-path query-path db-path name kind id))))
+                       (codeql-load-bqrs bqrs-path query-path db-path name kind id buffer-context))))
                (message "No query results in %s!" bqrs-path)))))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
@@ -1811,7 +1849,7 @@ This applies to both normal evaluation and quick evaluation.")
             (make-temp-file "bqrs" nil ".bqrs")))
          (library-path codeql--library-path)
          (db-scheme codeql--dbscheme)
-         (db-path (format "%s/" (directory-file-name codeql--active-database)))
+         (db-path (directory-file-name codeql--active-database))
          (query-info (codeql--query-info query-path)))
 
     ;; request a query compilation, its success callback will then request a query run
