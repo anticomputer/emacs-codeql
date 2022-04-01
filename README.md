@@ -13,10 +13,11 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 - Database history for the global session
 - Result browsing
 - Source archive location opening
-- Buffer local query server state (concurrent project, database and query support)
+- Buffer local query server state with concurrent remote|local project, database and query support
 - Automatic database selection deconfliction
 - Org based rendering of path-problem, problem, and raw results
 - Remote query development + evaluation via TRAMP
+- Compatible with [github/gh-codeql](https://github.com/github/gh-codeql) for cli version management
 
 ## Requirements
 
@@ -50,11 +51,12 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
   (setq codeql-configure-eglot-lsp t)
   (setq codeql-configure-projectile t)
   :config
-  ;; where your codeql repos are. Note: keep the "./" entry
-  (setq codeql-search-paths
-      (list (expand-file-name "~/codeql-home/codeql-repo/")
-            (expand-file-name "~/codeql-home/codeql-go")
-            "./")))
+  ;; you should configure your standard search paths through a ~/.config/codeql/config entry
+  ;; e.g. "--search-path /full/path/codeql:/full/path/codeql-go"
+  ;; see: https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/
+  ;; this option is here to provide you with load/search precedence control
+  ;; these paths will have precedence over the config file search paths
+  (setq codeql-search-paths '("./"))
 ```
 
 ### Alternative install method
@@ -71,11 +73,12 @@ Alternatively, you can clone this repository and place it into your emacs `load-
 
 ;; configuration
 
-;; where your codeql repos are. Note: keep the "./" entry
-(setq codeql-search-paths
-      (list (expand-file-name "~/codeql-home/codeql-repo/")
-            (expand-file-name "~/codeql-home/codeql-go")
-            "./"))
+;; you should configure your standard search paths through a ~/.config/codeql/config entry
+;; e.g. "--search-path /full/path/codeql:/full/path/codeql-go"
+;; see: https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/
+;; this option is here to provide you with load/search precedence control
+;; these paths will have precedence over the config file search paths
+(setq codeql-search-paths '("./"))
 ```
 
 ### Configuring the CodeQL CLI
@@ -115,24 +118,22 @@ If unavailable, `emacs-codeql` will fall back to its normal executable path expe
 
 #### Custom search paths
 
-IMPORTANT: CodeQL expects full paths for its search paths, so use `expand-file-name` when providing `~/` relative paths if you customize `codeql-search-paths`.
+We recommend you use [`.config/codeql/config`](https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/) for your codeql cli search path configurations. This allows for more straightforward standard search path deconfliction between local and remote query contexts.
 
-If you prefer to use [`.config/codeql/config`](https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/) for your codeql cli configurations, you can also configure the `emacs-codeql` search-paths as:
-
-```elisp
-(setq codeql-search-paths (list "./"))
-```
-
-And then ensure your codeql cli configuration contains search paths in `.config/codeql/config`, e.g.
+Ensure your codeql cli configuration contains your search paths in `.config/codeql/config` on any local or remote system that you intend to use the codeql cli on via `emacs-codeql`.
 
 ```
-λ ~ › echo "--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo" >> ~/.config/codeql/config
 λ ~ › cat ~/.config/codeql/config 
 --search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo
 λ ~ › 
 ```
+In this example `~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go` is a clone of https://github.com/github/codeql-go
 
 Use `codeql resolve qlpacks` to double check that you can resolve all the expected qlpacks available in the default repositories.
+
+The `codeql-search-paths` variable in `emacs-codeql` exists purely to provide you with search path precedence control. Unless you're wanting to override any of the default qlpacks from locations outside of the current project root, the existing and default value of '("./") suffices.
+
+`codeql-search-paths` entries are expanded in the context of their location, so if you do want to configure search paths that work across both local and remote systems, you're able to e.g. use a standard "~/path" notation, which will expand to the correct absolute path in the context of the remote or local system via TRAMP.
 
 
 ### Optional: build custom tree-sitter QL artifacts

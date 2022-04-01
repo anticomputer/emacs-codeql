@@ -239,10 +239,13 @@ in local and remote contexts to something that readily exists.")
   "If emacs-codeql detects the presence of a codeql enabled gh cli, use it.")
 
 (defvar codeql-search-paths
-  (list (expand-file-name "~/codeql-home/codeql-repo")
-        (expand-file-name "~/codeql-home/codeql-go")
-        "./")
-  "codeql cli library search paths.")
+  ;; file expansion happens buffer-local so that these work remotely as well
+  (list  "~/codeql-home/codeql-repo"
+         "~/codeql-home/codeql-go"
+         "./")
+  "codeql cli library search paths.
+
+This also gives you search path precedence control if you want to override a config.")
 
 ;; we use buffer-local copies of these so we can play context dependent tricks
 (defvar-local codeql--cli-buffer-local nil)
@@ -259,9 +262,9 @@ in local and remote contexts to something that readily exists.")
 (defvar codeql-max-raw-results 2000
   "The max amount of raw result tuples to render in an org-table.")
 
-(defun codeql--search-paths-from-config ()
+(defun codeql--search-paths-from-codeql-config ()
   ;; see if we have any paths configured in ~/.config/codeql/config, if so, use them as well
-  (let ((config-path (expand-file-name (codeql--tramp-wrap "~/.config/codeql/config"))))
+  (let ((config-path "~/.config/codeql/config"))
     (when-let ((search-paths-string
                 (and (codeql--file-exists-p config-path)
                      (codeql--shell-command-to-string
@@ -271,10 +274,17 @@ in local and remote contexts to something that readily exists.")
              (cadr (split-string (string-trim-right search-paths-string) " +\\|="))))
         ;; make sure all the search paths exist
         (cl-loop with search-paths = (split-string path-config ":")
-                 for path in search-paths do
-                 (unless (codeql--file-exists-p path)
-                   (error (format "Non-existing search path in configuration: %s" path))))
-        (list path-config)))))
+                 for path in search-paths
+                 unless (codeql--file-exists-p path) do
+                 (error (format "Non-existing search path in configuration: %s" path))
+                 collect (expand-file-name (codeql--tramp-wrap path)))))))
+
+(defun codeql--search-paths-from-emacs-config ()
+  ;; see if we have any paths configured in ~/.config/codeql/config, if so, use them as well
+  (cl-loop for path in codeql-search-paths
+           unless (codeql--file-exists-p path) do
+           (error (format "Non-existing search path in configuration: %s" path))
+           collect (expand-file-name (codeql--tramp-wrap path))))
 
 (defun codeql--search-path ()
   "Return any currently configured codeql cli search paths."
@@ -335,8 +345,20 @@ in local and remote contexts to something that readily exists.")
   (setq codeql--cli-buffer-local codeql-cli)
   (setq codeql--search-paths-buffer-local
         ;; we'll want both anything that might be in the .config + user customizations
-        (append (codeql--search-paths-from-config)
-                codeql-search-paths))
+        ;; give precedence to anything that comes from the emacs-codeql active config
+        ;; this gives us a notion of search precedence control if we want to override
+        ;; the paths from the config file
+
+        ;; emacs-codeql configs always have precedence
+        (append
+         ;; ensure we only add existing search paths
+         (codeql--search-paths-from-emacs-config)
+         ;; only add new paths that weren't already configured to prevent double-hits
+         (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
+                  for path in config-paths
+                  unless (member path codeql-search-paths)
+                  collect path
+                  do (message "Adding %s to search path from ~/.config/codeql/config" path))))
   ;; decide whether we want to use the gh cli to run our codeql commands
   (when (and codeql-use-gh-codeql-extension-when-available
              (codeql--gh-codeql-cli-available-p))
@@ -366,21 +388,9 @@ in local and remote contexts to something that readily exists.")
                         (string-trim-right remote-path)))
                     (read-file-name "Need remote path to codeql cli bin: "
                                     nil default-directory t))))))
-        (progn
-          ;; NOTE: if you're using the gh cli extension, you need to set your paths
-          ;; I recommend setting your search paths explicitly in a config file using:
-          ;; https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/
-          (setq codeql--search-paths-buffer-local
-                (append
-                 '("./")
-                 (cl-loop while (yes-or-no-p "Add remote search path? (not needed for cli siblings or when .config/codeql/config has search paths)")
-                          collect
-                          (when-let ((path (file-local-name
-                                            (read-file-name "Path: " nil default-directory t))))
-                            (message "Added %s to search paths." path)
-                            path))))
-          ;; all codeql cli commands will also execute in the remote context
-          (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path)))
+        ;; remote search path configs come from ~/.config/codeql/config
+        ;; asking the user for library search paths on-prompt is a bad UX
+        (setq codeql--cli-buffer-local (codeql--tramp-unwrap codeql-path))
       (error "Can not start session in remote context without path to codeql cli.")))
   ;; do any final init we need here
   (setq codeql--cli-info (codeql--get-cli-version))
@@ -619,7 +629,8 @@ in local and remote contexts to something that readily exists.")
   ;; only resolve once for current query buffer
   (unless (and codeql--library-path codeql--dbscheme)
     (message "Resolving query paths.")
-    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --additional-packs=%s --query=%s"
+    ;; we don't need to use --additional-packs since we already offer search path precedence control
+    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --search-path=%s --query=%s"
                         codeql--cli-buffer-local (codeql--search-path)
                         (codeql--tramp-unwrap query-path)))
            (json (codeql--shell-command-to-string
