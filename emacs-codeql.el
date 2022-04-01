@@ -487,6 +487,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
 ;; local database state
 (defvar-local codeql--active-database nil)
+(defvar-local codeql--active-database-language nil)
 (defvar-local codeql--database-dataset-folder nil)
 (defvar-local codeql--database-source-location-prefix nil)
 (defvar-local codeql--database-source-archive-zip nil)
@@ -512,6 +513,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   ;; clear out the buffer-local server and database state
   (setq codeql--query-server nil)
   (setq codeql--active-database nil)
+  (setq codeql--active-database-language nil)
   (setq codeql--database-dataset-folder nil)
   (message "Shut down query server and cleared active database."))
 
@@ -861,6 +863,11 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   (interactive)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
 
+  ;; if no server is running yet, offer to start one
+  (unless codeql--query-server
+    (transient-setup 'codeql-transient-query-server-init-start)
+    (error "No query server running, please start one and re-select database."))
+
   ;; init the database history if need be
   (unless codeql--registered-database-history
     (setq codeql--registered-database-history (make-hash-table :test 'equal)))
@@ -873,15 +880,13 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
     ;; resolve and set the dataset folder, we need this when running queries
     (let* ((database-info (codeql--database-info database-path))
+           (database-language (json-pointer-get database-info "/languages/0"))
            (source-location-prefix (json-pointer-get database-info "/sourceLocationPrefix"))
            (source-archive-zip (json-pointer-get database-info "/sourceArchiveZip"))
            (source-archive-root (json-pointer-get database-info "/sourceArchiveRoot"))
            (database-dataset-folder (json-pointer-get database-info "/datasetFolder")))
 
-      ;; if no server is running yet, offer to start one
-      (unless codeql--query-server
-        (transient-setup 'codeql-transient-query-server-init-start)
-        (error "No query server running, please start one and re-select database."))
+      (message "XXX: database language: %s" database-language)
 
       (cl-assert codeql--query-server t)
       (cl-assert database-dataset-folder t)
@@ -908,6 +913,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
          :progressId ,(codeql--query-server-next-progress-id))
        :success-fn
        (lexical-let ((buffer (current-buffer))
+                     (database-language database-language)
                      (database-path database-path)
                      (database-dataset-folder database-dataset-folder)
                      (source-location-prefix source-location-prefix)
@@ -922,6 +928,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
              (puthash database-path database-path codeql--registered-database-history)
              ;; these variables are buffer-local to ql-tree-sitter-mode
              (setq codeql--active-database database-path)
+             (setq codeql--active-database-language database-language)
              (setq codeql--database-dataset-folder database-dataset-folder)
              (setq codeql--database-source-location-prefix source-location-prefix)
              (setq codeql--database-source-archive-root source-archive-root)
@@ -958,6 +965,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
        ;;(message "Success: %s" registeredDatabases)
        (with-current-buffer buffer
          (setq codeql--active-database nil)
+         (setq codeql--active-database-language nil)
          (setq codeql--database-dataset-folder nil)
          (setq codeql--database-source-location-prefix nil)
          (setq codeql--database-source-archive-root nil)
@@ -1386,36 +1394,7 @@ This applies to both normal evaluation and quick evaluation.")
              ;; ok we have a path-node, add it to the path list
              path-node)))
 
-;; XXX: add an org link type of "codeql:" with associated handlers
-(require 'ol)
-
-(defun codeql--org-open-file-link (filename)
-  (message "XXX: entering with %s" filename)
-  ;; this works even if there's no split with "::" in which  case filename will be a value and line will be nil
-  (cl-multiple-value-bind (filename line) (split-string filename "::")
-    ;; check if we have an active parent buffer set from the session
-    ;; codeql--org-parent-buffer is the ql-tree-sitter-mode buffer
-    ;; from which this org link was generated in the session.
-    (message "XXX: %s" codeql--org-parent-buffer)
-    (when (bound-and-true-p codeql--org-parent-buffer)
-      (with-current-buffer codeql--org-parent-buffer
-        ;; do whatever we need to do in buffer local context below
-        (message "ZOMG IT WORKED")))
-    (org-open-file filename t (if line (string-to-number line) line))))
-
-(org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
-
-(defvar codeql--templated-query-formats
-  (list :c           "cpp/ql/src/%s.ql"
-        :cpp         "cpp/ql/src/%s.ql"
-        :java        "java/ql/src/%s.ql"
-        :cs          "csharp/ql/src/%s.ql"
-        :javascript  "javascript/ql/src/%s.ql"
-        :python      "python/ql/src/%s.ql"
-        :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
-        :ruby        "ruby/ql/src/ide-contextual-queries/%s.ql"
-        :go          "ql/lib/%s.ql")
-  "A format list for finding templated queries by name")
+;; template queries for definitions, references, and AST
 
 (defun codeql--templated-query-path (language query-name)
   "Return the relative path for a QUERY-NAME of type LANGUAGE."
@@ -1449,9 +1428,49 @@ This applies to both normal evaluation and quick evaluation.")
   (interactive)
   (codeql--run-templated-query :javascript "localDefinitions"))
 
-(defun codeql--process-defs (json))
-(defun codeql--process-refs (json))
-(defun codeql--print-ast (json))
+;; custom org link so we can do voodoo when C-c C-o on a codeql: link
+
+;; XXX: add an org link type of "codeql:" with associated handlers
+(require 'ol)
+
+;; XXX: build a hashmap of source-file to defs/refs or something?
+;; XXX: and then make that available in the parent context as cache?
+(defun codeql--org-open-file-link (filename)
+  (cl-multiple-value-bind (filename line) (split-string filename "::")
+    (when (bound-and-true-p codeql--org-parent-buffer)
+      (with-current-buffer codeql--org-parent-buffer
+        (message "XXX: arrived.")
+        (when codeql--active-database-language
+          ;; we have an active database in our parent buffer context
+          ;; so we'll use that to resolve definitions and references
+          (let ((language (intern (format ":%s" codeql--active-database-language))))
+            (message "ZOMG IT WORKED")
+            (codeql--run-templated-query language "localDefinitions")))))
+    (org-open-file filename t (if line (string-to-number line) line))))
+
+(org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
+
+(defvar codeql--templated-query-formats
+  (list :c           "cpp/ql/src/%s.ql"
+        :cpp         "cpp/ql/src/%s.ql"
+        :java        "java/ql/src/%s.ql"
+        :cs          "csharp/ql/src/%s.ql"
+        :javascript  "javascript/ql/src/%s.ql"
+        :python      "python/ql/src/%s.ql"
+        :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
+        :ruby        "ruby/ql/src/ide-contextual-queries/%s.ql"
+        :go          "ql/lib/%s.ql")
+  "A format list for finding templated queries by name")
+
+
+(defun codeql--process-defs (json)
+  (message "XXX: processing definitions."))
+
+(defun codeql--process-refs (json)
+  (message "XXX: processing references."))
+
+(defun codeql--print-ast (json)
+  (message "XXX: processing ast."))
 
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context)
