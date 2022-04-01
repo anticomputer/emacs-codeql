@@ -191,7 +191,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   "The max amount of raw result tuples to render in an org-table.")
 
 (defun codeql--search-paths-from-codeql-config ()
-  ;; see if we have any paths configured in ~/.config/codeql/config, if so, use them as well
+  "Grab search paths from the codeql cli configuration file."
   (let ((config-path "~/.config/codeql/config"))
     (when-let ((search-paths-string
                 (and (codeql--file-exists-p config-path)
@@ -213,7 +213,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
                    local-search-path))))))
 
 (defun codeql--search-paths-from-emacs-config ()
-  ;; see if we have any paths configured in ~/.config/codeql/config, if so, use them as well
+  "Grab search paths from our emacs configuration."
   (cl-loop for path in codeql-search-paths
            unless (codeql--file-exists-p path) do
            (error (format "Non-existing search path in configuration: %s" path))
@@ -316,19 +316,16 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   (condition-case nil
       ;; without eglot we don't get default-directory set from project-root
       ;; so we back up to a reasonable alternative before resolving paths
-      (if codeql-configure-eglot-lsp
-          (cond
-           ;; do you REALLY want LSP on though?
-           ((file-remote-p (buffer-file-name))
-            (if (yes-or-no-p "[WARNING] Do you want to use LSP remotely? This can be very slow!")
-                (eglot-ensure)
-              ;; nah? ok set a reasonable default-directory
-              (setq default-directory (file-name-directory (buffer-file-name)))))
-           ;; locally we're cool with LSP on
-           ((not (file-remote-p (buffer-file-name)))
-            (eglot-ensure)))
-        ;; no LSP, set a reasonable default-directory
+
+      (if (and codeql-configure-eglot-lsp
+               (or (and (file-remote-p (buffer-file-name))
+                        (yes-or-no-p "[WARNING] Do you want to use LSP remotely? This can be very slow!"))
+                   (not (file-remote-p (buffer-file-name)))))
+          ;; turn eglot on if local or we really want it remote
+          (eglot-ensure)
+        ;; set default-directory to a sane alternative if not
         (setq default-directory (file-name-directory (buffer-file-name))))
+
     ;; no LSP for us due to error
     (error (progn
              (message "Ignoring failed LSP initialization and plowing ahead!")
