@@ -1467,9 +1467,9 @@ This applies to both normal evaluation and quick evaluation.")
             (when (codeql--database-src-path-p filename)
               (message "XXX: handling a file from database source archive")
               ;; don't process more than once, caches are buffer local
-              (unless (gethash filename codeql--definitions-cache)
+              (unless (and codeql--definitions-cache (gethash filename codeql--definitions-cache))
                 (codeql--run-templated-query language "localDefinitions" filename))
-              (unless (gethash filename codeql--references-cache)
+              (unless (and codeql--references-cache (gethash filename codeql--references-cache))
                 (codeql--run-templated-query language "localReferences" filename)))))))
     (org-open-file filename t (if line (string-to-number line) line))))
 
