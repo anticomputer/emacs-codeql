@@ -1104,7 +1104,7 @@ This applies to both normal evaluation and quick evaluation.")
           ;; XXX: to alert on any wacky file schemes we might need to support
           ;; we implement a custom org link type so we can add extra sauce on link follow
           (when filename (cl-assert (not (string-match ":" filename)))))
-        (let ((link (format "codeql:%s/%s::%s"
+        (let ((link (format "codeql:%s%s::%s"
                             ;; we've extracted to the expected location
                             (codeql--tramp-wrap codeql--database-source-archive-root)
                             (codeql--result-node-filename node)
@@ -1433,6 +1433,10 @@ This applies to both normal evaluation and quick evaluation.")
   (when-let ((query-path (codeql--templated-query-path language query-name)))
     (cl-loop for search-path in codeql--search-paths-buffer-local
              for full-path = (format "%s/%s" search-path query-path)
+             do
+             (message "XXX: checking %s" full-path))
+    (cl-loop for search-path in codeql--search-paths-buffer-local
+             for full-path = (format "%s/%s" search-path query-path)
              when (codeql--file-exists-p full-path)
              do
              (message "Resolved templated query %s to %s" query-name full-path)
@@ -1444,16 +1448,14 @@ This applies to both normal evaluation and quick evaluation.")
                           ,(codeql--archive-path-from-org-filename (codeql--tramp-unwrap filename)))])))))
                (codeql--query-server-run-query-from-path full-path nil template-values filename))
              ;; respect search precedence and only return from first find
-             (cl-return))))
+             (cl-return)
+             finally
+             (error "Did not find templated queries in search paths, did you not configure ~/.config/codeql/config?")
+             )))
 
 (defun codeql--database-src-path-p (path)
-  (let ((prefix (format "^%s/*%s"
-                        codeql--database-source-archive-root
-                        codeql--database-source-location-prefix)))
-    (when
-        (string-match
-         prefix
-         (codeql--tramp-unwrap path))
+  (let ((prefix (format "^%s/*" codeql--database-source-archive-root)))
+    (when (string-match prefix (codeql--tramp-unwrap path))
       t)))
 
 ;; custom org link so we can do voodoo when C-c C-o on a codeql: link
@@ -1520,6 +1522,7 @@ This applies to both normal evaluation and quick evaluation.")
 
 (defun codeql-xref-backend ()
   "CodeQL backend for Xref."
+  (message "XXX: xref checking for: %s" (buffer-file-name))
   (when (and  (gethash (buffer-file-name) codeql--references-cache)
               (gethash (buffer-file-name) codeql--definitions-cache))
     (message "XXX: buffer has codeql refs/defs available")
