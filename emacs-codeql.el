@@ -341,7 +341,12 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
          (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
                   for path in config-paths
                   unless (member path codeql-search-paths)
-                  collect path))))
+                  collect path)))
+
+  (when (and (<= (length codeql--search-paths-buffer-local) 1)
+             (yes-or-no-p "Found <= 1 search path entry, did you forget to configure ~/.config/codeql/config?"))
+    (message "Search paths: %s" codeql--search-paths-buffer-local)
+    (error "See https://github.com/anticomputer/emacs-codeql for configuration examples.")))
 
 ;; add a hook that sets up all the things we need to be available in the buffer-local context
 (add-hook 'ql-tree-sitter-mode-hook #'codeql--buffer-local-init-hook)
@@ -399,7 +404,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
 (defun codeql--file-exists-p (file)
   (if (file-remote-p default-directory)
-      (tramp-handle-file-exists-p (codeql--tramp-wrap file))
+      (file-exists-p (codeql--tramp-wrap file))
     (file-exists-p (codeql--tramp-unwrap file))))
 
 ;; init our storage locations
@@ -1424,6 +1429,7 @@ This applies to both normal evaluation and quick evaluation.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert codeql--active-database t)
 
+  (message "XXX: running templated query! %s %s %s" language query-name filename)
   (when-let ((query-path (codeql--templated-query-path language query-name)))
     (cl-loop for search-path in codeql--search-paths-buffer-local
              for full-path = (format "%s/%s" search-path query-path)
@@ -1435,19 +1441,20 @@ This applies to both normal evaluation and quick evaluation.")
                       (:values
                        (:tuples
                         [(:stringValue
-                          ,(codeql--archive-path-from-org-filename filename))])))))
+                          ,(codeql--archive-path-from-org-filename (codeql--tramp-unwrap filename)))])))))
                (codeql--query-server-run-query-from-path full-path nil template-values filename))
              ;; respect search precedence and only return from first find
              (cl-return))))
 
 (defun codeql--database-src-path-p (path)
-  (when
-      (string-match
-       (format "^%s/+%s"
-               codeql--database-source-archive-root
-               codeql--database-source-location-prefix)
-       (codeql--tramp-unwrap path))
-    t))
+  (let ((prefix (format "^%s/*%s"
+                        codeql--database-source-archive-root
+                        codeql--database-source-location-prefix)))
+    (when
+        (string-match
+         prefix
+         (codeql--tramp-unwrap path))
+      t)))
 
 ;; custom org link so we can do voodoo when C-c C-o on a codeql: link
 
@@ -1457,6 +1464,7 @@ This applies to both normal evaluation and quick evaluation.")
 ;; XXX: build a hashmap of source-file to defs/refs or something?
 ;; XXX: and then make that available in the parent context as cache?
 (defun codeql--org-open-file-link (filename)
+  (message  "XXX: opening filename: %s" filename)
   (cl-multiple-value-bind (filename line) (split-string filename "::")
     (when (bound-and-true-p codeql--org-parent-buffer)
       (with-current-buffer codeql--org-parent-buffer
@@ -1464,13 +1472,14 @@ This applies to both normal evaluation and quick evaluation.")
           ;; we have an active database in our parent buffer context
           ;; so we'll use that to resolve definitions and references
           (let ((language (intern (format ":%s" codeql--active-database-language))))
+            (message "XXX: checking filename: %s" filename)
             (when (codeql--database-src-path-p filename)
               (message "XXX: handling a file from database source archive")
               ;; don't process more than once, caches are buffer local
               (unless (and codeql--definitions-cache (gethash filename codeql--definitions-cache))
                 (codeql--run-templated-query language "localDefinitions" filename))
               (unless (and codeql--references-cache (gethash filename codeql--references-cache))
-                (codeql--run-templated-query language "localReferences" filename)))))))
+                (codeql--run-templated-query language "localReferences"  filename)))))))
     (org-open-file filename t (if line (string-to-number line) line))))
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
@@ -1487,6 +1496,7 @@ This applies to both normal evaluation and quick evaluation.")
         :go          "ql/lib/%s.ql")
   "A format list for finding templated queries by name")
 
+;; note: filenames in these hash tables will include their tramp prefixes
 
 (defun codeql--process-defs (json filename)
   (message "XXX: processing definitions for: %s" filename)
