@@ -467,6 +467,11 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
 (defvar codeql--registered-database-history nil)
 
+;; global caches for database source archive files defs/refs/ast
+(defvar codeql--definitions-cache nil)
+(defvar codeql--references-cache nil)
+(defvar codeql--ast-cache nil)
+
 (defvar codeql--active-datasets nil
   "A hash map of all registered databases across all sessions.")
 
@@ -519,11 +524,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
 ;; local query history
 (defvar-local codeql--completed-query-history nil)
-
-;; local caches for database source archive files defs/refs/ast
-(defvar-local codeql--definitions-cache nil)
-(defvar-local codeql--references-cache nil)
-(defvar-local codeql--ast-cache nil)
 
 (defun codeql--reset-def-ref-ast-cache ()
   "Clear out all the buffer-local ref/def/ast caches."
@@ -1515,6 +1515,35 @@ This applies to both normal evaluation and quick evaluation.")
   (unless codeql--ast-cache
     (setq codeql--ast-cache (make-hash-table :test #'equal)))
   (puthash filename json codeql--ast-cache))
+
+;; xref backend for our global ref/def caches
+
+(defun codeql-xref-backend ()
+  "CodeQL backend for Xref."
+  (when (and  (gethash (buffer-file-name) codeql--references-cache)
+              (gethash (buffer-file-name) codeql--definitions-cache))
+    (message "XXX: buffer has codeql refs/defs available")
+    'codeql))
+
+(cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
+  (let ((current-symbol (symbol-at-point)))
+    (when current-symbol
+      (symbol-name current-symbol))))
+
+(cl-defmethod xref-backend-definitions ((_backend (eql codeql)) symbol)
+  (message "XXX: xref definitions"))
+
+(cl-defmethod xref-backend-references ((_backend (eql codeql)) symbol)
+  (message "XXX: xref references"))
+
+(cl-defmethod xref-backend-apropos ((_backend (eql codeql)) symbol)
+  (message "XXX: xref apropos"))
+
+(cl-defmethod xref-backend-identifier-completion-table ((_backend (eql codeql)))
+  "Return a list of terms for completions taken from the symbols in the current buffer."
+  (message "XXX: xfref completions"))
+
+(add-to-list 'xref-backend-functions 'codeql-xref-backend)
 
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context &optional src-filename)
