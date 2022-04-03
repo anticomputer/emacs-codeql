@@ -98,6 +98,7 @@
 (require 'url-util)
 (require 'url-parse)
 (require 'org)
+(require 'ol)
 
 ;; bundled
 (require 'ql-tree-sitter)
@@ -1460,13 +1461,25 @@ This applies to both normal evaluation and quick evaluation.")
 
 ;; custom org link so we can do voodoo when C-c C-o on a codeql: link
 
-;; XXX: add an org link type of "codeql:" with associated handlers
-(require 'ol)
+;; from https://www.emacswiki.org/emacs/BufferLocalKeys
+(defun codeql--buffer-local-set-key (key func)
+  (let* ((mode-name "codeql-xref")
+         (name (intern mode-name))
+         (map-name (format "%s-map" mode-name))
+         (map (intern map-name)))
+    (unless (boundp map)
+      (set map (make-sparse-keymap)))
+    (eval
+     `(define-minor-mode ,name
+        ,(concat
+          "Automagically built minor mode to define buffer-local keys.\n"
+          "\\{" map-name "}")
+        nil " Editing" ,map))
+    (eval
+     `(define-key ,map ,key ',func))
+    (funcall name t)))
 
-;; XXX: build a hashmap of source-file to defs/refs or something?
-;; XXX: and then make that available in the parent context as cache?
 (defun codeql--org-open-file-link (filename)
-  ;;(message  "XXX: opening filename: %s" filename)
   (cl-multiple-value-bind (filename line) (split-string filename "::")
     (when (bound-and-true-p codeql--org-parent-buffer)
       (with-current-buffer codeql--org-parent-buffer
@@ -1474,15 +1487,32 @@ This applies to both normal evaluation and quick evaluation.")
           ;; we have an active database in our parent buffer context
           ;; so we'll use that to resolve definitions and references
           (let ((language (intern (format ":%s" codeql--active-database-language))))
-            ;;(message "XXX: checking filename: %s" filename)
             (when (codeql--database-src-path-p filename)
-              ;;(message "XXX: handling a file from database source archive")
-              ;; don't process more than once, caches are buffer local
+              ;; don't process more than once, caches are global
               (unless (and codeql--definitions-cache (gethash filename codeql--definitions-cache))
                 (codeql--run-templated-query language "localDefinitions" filename))
               (unless (and codeql--references-cache (gethash filename codeql--references-cache))
                 (codeql--run-templated-query language "localReferences"  filename)))))))
-    (org-open-file filename t (if line (string-to-number line) line))))
+    ;; this is a horrible hack to make our xref backend the only one available for QL archive files
+    ;; since we do a bunch of trickery to transparently jump to refs/defs inside the archive
+    (let ((ugly-hack (find-file-other-window filename)))
+      (when ugly-hack
+        (with-current-buffer ugly-hack
+          (widen)
+          (when line (org-goto-line (string-to-number line)))
+          (codeql--buffer-local-set-key
+           (kbd "M-.") (lexical-let ((xref-backend-functions '(codeql-xref-backend)))
+                         (lambda (identifier)
+                           (interactive (list (xref--read-identifier "Find definitions of: ")))
+                           (xref-find-definitions identifier))))
+          (codeql--buffer-local-set-key
+           (kbd "M-?") (lexical-let ((xref-backend-functions '(codeql-xref-backend)))
+                         (lambda (identifier)
+                           (interactive (list (xref--read-identifier "Find references of: ")))
+                           (xref-find-references identifier))))
+          (codeql--buffer-local-set-key
+           (kbd "M-,") #'xref-pop-marker-stack))
+        (message "Activated CodeQL source archive xref bindings in %s" (file-name-nondirectory filename))))))
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
 
@@ -1600,7 +1630,7 @@ This applies to both normal evaluation and quick evaluation.")
   ;; just do a dumb thing at point for now so there's not really any completions
   (list (codeql--xref-thing-at-point)))
 
-(add-to-list 'xref-backend-functions 'codeql-xref-backend)
+(add-to-list 'xref-backend-functions #'codeql-xref-backend)
 
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context &optional src-filename src-root)
