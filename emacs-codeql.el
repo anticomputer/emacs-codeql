@@ -1522,19 +1522,23 @@ This applies to both normal evaluation and quick evaluation.")
 
 (defun codeql-xref-backend ()
   "CodeQL backend for Xref."
-  ;;(message "XXX: xref checking for: %s" (buffer-file-name))
   (when (and  (gethash (buffer-file-name) codeql--references-cache)
               (gethash (buffer-file-name) codeql--definitions-cache))
-    (message "CodeQL Xref: %s has refs && defs available"
-             (file-name-nondirectory (buffer-file-name)))
     'codeql))
 
-(cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
+(defun codeql--xref-thing-at-point ()
+  "Return the thing at point."
   (let ((current-symbol (symbol-at-point)))
     (when current-symbol
       (symbol-name current-symbol))))
 
+(cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
+  "Return the thing at point."
+  ;; we get away with this because really our codeql xref lookups are based on position
+  (codeql--xref-thing-at-point))
+
 (cl-defmethod xref-backend-definitions ((_backend (eql codeql)) symbol)
+  "Get known definitions for location at point."
   (cl-multiple-value-bind (json src-root) (gethash (buffer-file-name) codeql--definitions-cache)
     ;; re-parsing the json for every definition is terribly inefficient
     ;; so once this works, move into more performant datastructures
@@ -1562,14 +1566,39 @@ This applies to both normal evaluation and quick evaluation.")
                (xref-make desc (xref-make-file-location filename line (1- column)))))))
 
 (cl-defmethod xref-backend-references ((_backend (eql codeql)) symbol)
-  (message "XXX: xref references"))
+  "Get known references for location at point."
+  (cl-multiple-value-bind (json src-root) (gethash (buffer-file-name) codeql--references-cache)
+    (when (and json src-root)
+      (cl-loop with tuples = (json-pointer-get json "/#select/tuples")
+               for tuple across tuples
+               for src = (json-pointer-get `((tuple . ,tuple)) "/tuple/0")
+               for dst = (json-pointer-get `((tuple . ,tuple)) "/tuple/1")
+               for dst-start-line = (json-pointer-get dst "/url/startLine")
+               for dst-start-column = (json-pointer-get dst "/url/startColumn")
+               for dst-end-column = (json-pointer-get dst "/url/endColumn")
+               for filename = (format "%s%s" src-root (codeql--uri-to-filename (json-pointer-get src "/url/uri")))
+               for line = (json-pointer-get src "/url/startLine")
+               for column = (json-pointer-get src "/url/startColumn")
+               for desc = (json-pointer-get src "/label")
+               when
+               ;; columns in emacs are 0-based, columns in codeql are 1 based
+               (let ((point-line (line-number-at-pos))
+                     (point-column (1+ (current-column))))
+                 (and (eql dst-start-line point-line)
+                      (<= point-column dst-end-column)
+                      (>= point-column dst-start-column)))
+               ;; if point is at a def that we know about, collect the ref
+               collect
+               (xref-make desc (xref-make-file-location filename line (1- column)))))))
 
+;; XXX: TODO
 (cl-defmethod xref-backend-apropos ((_backend (eql codeql)) symbol)
-  (message "XXX: xref apropos"))
+  nil)
 
 (cl-defmethod xref-backend-identifier-completion-table ((_backend (eql codeql)))
   "Return a list of terms for completions taken from the symbols in the current buffer."
-  (message "XXX: xfref completions"))
+  ;; just do a dumb thing at point for now so there's not really any completions
+  (list (codeql--xref-thing-at-point)))
 
 (add-to-list 'xref-backend-functions 'codeql-xref-backend)
 
