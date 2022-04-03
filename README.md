@@ -254,11 +254,17 @@ Results contain source code locations in the form of org links, which can be vis
 
 `emacs-codeql` automatically retrieves references and definitions for database source archive files that are opened from a result buffer org link. It achieves this by registering a custom org-link handler for a `codeql:` link type which then performs a ridiculous elisp ritual to trick emacs into thinking it actually has xref support for these files specifically. 
 
-`emacs-codeql` rudely overrides the default xref bindings for any existing major-mode that might normally take precedence for the type of source file that is opened, but only for files opened from a result buffer.
+`emacs-codeql` rudely overrides the default xref bindings for any existing major-mode that might normally take precedence for the type of source file that is opened, but only for files opened from a result buffer. But not to worry, these overrides are buffer-local only, and won't tamper with any other source files sharing the same major-mode that are NOT inside a codeql database source archive.
 
 The `codeql:` link handler sets up a buffer-local context for the opened source file that initializes a custom xref backend, such that the normal emacs `xref-find-definitions` and `xref-find-references` functions (commonly bound to `M-.` and `M-,`) operate as you would expect them to.
 
 Note: references and definitions are fetched asynchronously by running templated queries in the background the first time a given archive file is visited in the current session. When the xref results are available, the xref backend will automagically start working without any further requirements from the user, but it may take a few seconds before they actually become active. On subsequent visits, the xref data is pulled from cache and should be available instantly.
+
+There occurs a somewhat awkward situation when you follow a transitive xref, i.e. one that is not directly in a child buffer of a org link follow. At that point `emacs-codeql` doesn't know yet that this file was opened in a codeql source browsing context and that it still needs its references and definitions resolved. To deal with this, you can can `M-x RET codeql-xref-backend RET` as this will initialize the buffer with the required xref bindings.
+
+Alternatively, any invocation of the default `xref-find-references` or `xref-find-definitions` functions will trigger a call to the `codeql-xref-backend` function as well, since it serves as the `xref-backend-functions` entry for the codeql xref backend. After this initial invocation to the standard bindings, the codeql xref bindings will then take over if `codeql-xref-backend` determined that the file its operating on is inside a codeql database source archive.
+
+It is left as a matter of user preference whether to invoke `codeql-xref-backend` themselves, or to deal with a single layer of indirection and wait for one of the xref API to invoke it for them.
 
 ## Commands
 
