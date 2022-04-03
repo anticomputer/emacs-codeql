@@ -1021,7 +1021,7 @@ This applies to both normal evaluation and quick evaluation.")
   (/ (length
       (encode-coding-region
        (line-beginning-position)
-       (point) 'utf-16 t))
+       (min (point) (point-max)) 'utf-16 t))
      2))
 
 ;; XXX: this feels a little crummy still, revisit
@@ -1535,12 +1535,14 @@ a codeql database source archive."
                for src-end-column = (json-pointer-get src "/url/endColumn")
                for filename = (format "%s%s" src-root (codeql--uri-to-filename (json-pointer-get dst "/url/uri")))
                for line = (json-pointer-get dst "/url/startLine")
+               ;; XXX: need to go from utf-16 column value to visual column value
                for column = (json-pointer-get dst "/url/startColumn")
                for desc = (json-pointer-get dst "/label")
                when
                ;; columns in emacs are 0-based, columns in codeql are 1 based
+               ;; columns in codeql are utf-16 code points, not visual column
                (let ((point-line (line-number-at-pos))
-                     (point-column (1+ (current-column))))
+                     (point-column (codeql-lsp-abiding-column)))
                  (and (eql src-start-line point-line)
                       (<= point-column src-end-column)
                       (>= point-column src-start-column)))
@@ -1561,12 +1563,14 @@ a codeql database source archive."
                for dst-end-column = (json-pointer-get dst "/url/endColumn")
                for filename = (format "%s%s" src-root (codeql--uri-to-filename (json-pointer-get src "/url/uri")))
                for line = (json-pointer-get src "/url/startLine")
+               ;; XXX: need to go from utf-16 column value to visual column value
                for column = (json-pointer-get src "/url/startColumn")
                for desc = (json-pointer-get src "/label")
                when
                ;; columns in emacs are 0-based, columns in codeql are 1 based
+               ;; columns in codeql are utf-16 code points, not visual column
                (let ((point-line (line-number-at-pos))
-                     (point-column (1+ (current-column))))
+                     (point-column (codeql-lsp-abiding-column)))
                  (and (eql dst-start-line point-line)
                       (<= point-column dst-end-column)
                       (>= point-column dst-start-column)))
