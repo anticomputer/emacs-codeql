@@ -473,8 +473,11 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 (defvar codeql--references-cache nil)
 (defvar codeql--ast-cache nil)
 
+(defvar codeql--active-source-roots-with-buffers nil
+  "A hash table of currently active archive source roots and their query buffers.")
+
 (defvar codeql--active-datasets nil
-  "A hash map of all registered databases across all sessions.")
+  "A hash table of all registered databases across all sessions.")
 
 (defun codeql--active-datasets-init ()
   (setq codeql--active-datasets (make-hash-table :test #'equal)))
@@ -508,6 +511,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
 (defun codeql--reset-database-state ()
   "Clear out all the buffer-local database state."
+  (remhash codeql--database-source-archive-root codeql--active-source-roots-with-buffers)
   (setq codeql--active-database nil)
   (setq codeql--active-database-language nil)
   (setq codeql--database-dataset-folder nil)
@@ -897,6 +901,10 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   (unless codeql--registered-database-history
     (setq codeql--registered-database-history (make-hash-table :test #'equal)))
 
+  ;; init active source roots map if need be
+  (unless codeql--active-source-roots-with-buffers
+    (setq codeql--active-source-roots-with-buffers (make-hash-table :test #'equal)))
+
   (let ((database-path
          (or database-path
              ;; note that this doesn't return plain strings in remote context
@@ -947,6 +955,8 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
            (with-current-buffer buffer
              ;; global addition can be asynchronous, so we do that on success only
              (codeql--active-datasets-add database-dataset-folder (current-buffer))
+             ;; associate the source root with the query buffer globally for xref support
+             (puthash source-archive-root (current-buffer) codeql--active-source-roots-with-buffers)
              ;; save in database selection history
              (puthash database-path database-path codeql--registered-database-history)
              ;; these variables are buffer-local to ql-tree-sitter-mode
@@ -1452,108 +1462,72 @@ This applies to both normal evaluation and quick evaluation.")
     (when (string-match prefix (codeql--tramp-unwrap path))
       t)))
 
-;; custom org link so we can do voodoo when C-c C-o on a codeql: link
-
-;; from https://www.emacswiki.org/emacs/BufferLocalKeys
-(defun codeql--buffer-local-set-key (key func)
-  (let* ((mode-name "codeql-xref")
-         (name (intern mode-name))
-         (map-name (format "%s-map" mode-name))
-         (map (intern map-name)))
-    (unless (boundp map)
-      (set map (make-sparse-keymap)))
-    (eval
-     `(define-minor-mode ,name
-        ,(concat
-          "Automagically built minor mode to define buffer-local keys.\n"
-          "\\{" map-name "}")
-        nil " Editing" ,map))
-    (eval
-     `(define-key ,map ,key ',func))
-    (funcall name t)))
-
-(defun codeql--org-open-file-link (filename)
-  (cl-multiple-value-bind (filename line) (split-string filename "::")
-    (when (bound-and-true-p codeql--org-parent-buffer)
-      (with-current-buffer codeql--org-parent-buffer
-        (when codeql--active-database-language
-          ;; we have an active database in our parent buffer context
-          ;; so we'll use that to resolve definitions and references
-          (let ((language (intern (format ":%s" codeql--active-database-language))))
-            (when (codeql--database-src-path-p filename)
-              ;; don't process more than once, caches are global
-              (unless (and codeql--definitions-cache (gethash filename codeql--definitions-cache))
-                (codeql--run-templated-query language "localDefinitions" filename))
-              (unless (and codeql--references-cache (gethash filename codeql--references-cache))
-                (codeql--run-templated-query language "localReferences"  filename)))))))
-    ;; this is a horrible hack to make our xref backend the only one available for QL archive files
-    ;; since we do a bunch of trickery to transparently jump to refs/defs inside the archive
-    (let ((ugly-hack (find-file-other-window filename)))
-      (when ugly-hack
-        (with-current-buffer ugly-hack
-          (widen)
-          (when line (org-goto-line (string-to-number line)))
-          (codeql--buffer-local-set-key
-           (kbd "M-.") (lexical-let ((xref-backend-functions '(codeql-xref-backend)))
-                         (lambda (identifier)
-                           (interactive (list (xref--read-identifier "Find definitions of: ")))
-                           (xref-find-definitions identifier))))
-          (codeql--buffer-local-set-key
-           (kbd "M-?") (lexical-let ((xref-backend-functions '(codeql-xref-backend)))
-                         (lambda (identifier)
-                           (interactive (list (xref--read-identifier "Find references of: ")))
-                           (xref-find-references identifier))))
-          (codeql--buffer-local-set-key
-           (kbd "M-,") #'xref-pop-marker-stack))
-        (message "Activated CodeQL source archive xref bindings in %s" (file-name-nondirectory filename))))))
-
-(org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
-
-(defvar codeql--templated-query-formats
-  (list :c           "cpp/ql/src/%s.ql"
-        :cpp         "cpp/ql/src/%s.ql"
-        :java        "java/ql/src/%s.ql"
-        :cs          "csharp/ql/src/%s.ql"
-        :javascript  "javascript/ql/src/%s.ql"
-        :python      "python/ql/src/%s.ql"
-        :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
-        :ruby        "ruby/ql/src/ide-contextual-queries/%s.ql"
-        :go          "ql/lib/%s.ql")
-  "A format list for finding templated queries by name")
-
-;; note: filenames in these hash tables will include their tramp prefixes
-
-(defun codeql--process-defs (json src-filename src-root)
-  (unless codeql--definitions-cache
-    (setq codeql--definitions-cache (make-hash-table :test #'equal)))
-  (puthash src-filename (list json src-root) codeql--definitions-cache)
-  (message "Processed definitions for: %s" (file-name-nondirectory src-filename)))
-
-(defun codeql--process-refs (json src-filename src-root)
-  (unless codeql--references-cache
-    (setq codeql--references-cache (make-hash-table :test #'equal)))
-  (puthash src-filename (list json src-root) codeql--references-cache)
-  (message "Processed references for: %s" (file-name-nondirectory src-filename)))
-
-(defun codeql--print-ast (json src-filename src-root)
-  (unless codeql--ast-cache
-    (setq codeql--ast-cache (make-hash-table :test #'equal)))
-  (puthash src-filename (list json src-root) codeql--ast-cache)
-  (message "Processed AST for: %s" (file-name-nondirectory src-filename)))
-
 ;; xref backend for our global ref/def caches
 
-(defun codeql-xref-backend ()
-  "CodeQL backend for Xref."
-  (when (and  (gethash (buffer-file-name) codeql--references-cache)
-              (gethash (buffer-file-name) codeql--definitions-cache))
-    'codeql))
+(defvar-local codeql--xref-has-bindings nil)
 
 (defun codeql--xref-thing-at-point ()
   "Return the thing at point."
   (let ((current-symbol (symbol-at-point)))
     (when current-symbol
       (symbol-name current-symbol))))
+
+(defun codeql--set-local-xref-bindings ()
+  (unless codeql--xref-has-bindings
+    (use-local-map (copy-keymap (symbol-value (intern (format "%s-map" major-mode)))))
+    (local-set-key (kbd "M-.")
+                   (lexical-let ((xref-backend-functions '(codeql-xref-backend)))
+                     (lambda (identifier)
+                       ;;(interactive (list (xref--read-identifier "Find definitions of: ")))
+                       ;; skip the completion crud, since lookups are point/location based
+                       (interactive (list (codeql--xref-thing-at-point)))
+                       (xref-find-definitions identifier))))
+    (local-set-key (kbd "M-?")
+                   (lexical-let ((xref-backend-functions '(codeql-xref-backend)))
+                     (lambda (identifier)
+                       ;;(interactive (list (xref--read-identifier "Find references of: ")))
+                       ;; skip the completion crud, since lookups are point/location based
+                       (interactive (list (codeql--xref-thing-at-point)))
+                       (xref-find-references identifier))))
+    (local-set-key (kbd "M-,") #'xref-pop-marker-stack)
+    ;; source archive files are for browsing only!
+    (setq buffer-read-only t)
+    (message "Activated CodeQL source archive xref bindings in %s" (file-name-nondirectory (buffer-file-name)))
+    (setq codeql--xref-has-bindings t)))
+
+(defun codeql-xref-backend ()
+  "CodeQL backend for Xref.
+
+This function serves two purposes. You can bind it as a command so that
+you have a shortcut to enabling the codeql xref backend for a file you
+know is a source archive file, overriding any default major-mode bindings.
+
+It also serves as the xref-backend-functions function. So even if you
+don't call this yourself, when you invoke any of the standard xref
+functions, this will run and replace any existing xref bindings in
+the local buffer when appropriate, i.e. when the buffer is a file inside
+a codeql database source archive."
+  (interactive)
+  (if (and (gethash (buffer-file-name) codeql--references-cache)
+           (gethash (buffer-file-name) codeql--definitions-cache))
+      (progn
+        (codeql--set-local-xref-bindings)
+        'codeql)
+    ;; see if this file SHOULD have codeql refs and defs and the local bindings
+    ;; XXX: this is not very performant, make this a faster lookup
+    (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
+             with filename = (buffer-file-name)
+             when (string-match source-root filename)
+             do
+             ;; hail to the guardians of the watch towers of the east
+             (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory filename))
+             (with-current-buffer (gethash source-root codeql--active-source-roots-with-buffers)
+               (let ((language (intern (format ":%s" codeql--active-database-language))))
+                 (codeql--run-templated-query language "localDefinitions" filename)
+                 (codeql--run-templated-query language "localReferences" filename)))
+             ;; we want our bindings available
+             (codeql--set-local-xref-bindings)
+             (cl-return 'codeql))))
 
 (cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
   "Return the thing at point."
@@ -1635,6 +1609,83 @@ Our implementation simply returns the thing at point as a candidate."
   (list (codeql--xref-thing-at-point)))
 
 (add-to-list 'xref-backend-functions #'codeql-xref-backend)
+
+;; custom org link so we can do voodoo when C-c C-o on a codeql: link
+
+;; from https://www.emacswiki.org/emacs/BufferLocalKeys
+;; (defun codeql--buffer-local-set-key (key func)
+;;   (let* ((map-ident (file-name-nondirectory (buffer-file-name)))
+;;          (mode-name (format "%s-codeql-xref" map-ident))
+;;          (name (intern mode-name))
+;;          (map-name (format "%s-map" mode-name))
+;;          (map (intern map-name)))
+;;     (unless (boundp map)
+;;       (set map (make-sparse-keymap)))
+;;     (eval
+;;      `(define-minor-mode ,name
+;;         ,(concat
+;;           "Automagically built minor mode to define buffer-local keys.\n"
+;;           map-name)
+;;         nil " Editing" ,map))
+;;     (eval
+;;      `(define-key ,map ,key ',func))
+;;     (funcall name t)))
+
+(defun codeql--org-open-file-link (filename)
+  (cl-multiple-value-bind (filename line) (split-string filename "::")
+    (when (bound-and-true-p codeql--org-parent-buffer)
+      (with-current-buffer codeql--org-parent-buffer
+        (when codeql--active-database-language
+          ;; we have an active database in our parent buffer context
+          ;; so we'll use that to resolve definitions and references
+          (let ((language (intern (format ":%s" codeql--active-database-language))))
+            (when (codeql--database-src-path-p filename)
+              ;; don't process more than once, caches are global
+              (unless (and codeql--definitions-cache (gethash filename codeql--definitions-cache))
+                (codeql--run-templated-query language "localDefinitions" filename))
+              (unless (and codeql--references-cache (gethash filename codeql--references-cache))
+                (codeql--run-templated-query language "localReferences"  filename)))))))
+    (let ((ugly-hack (find-file-other-window filename)))
+      (when ugly-hack
+        (with-current-buffer ugly-hack
+          (widen)
+          (when line (org-goto-line (string-to-number line)))
+          ;; set our local xref bindings
+          (codeql--set-local-xref-bindings))))))
+
+(org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
+
+(defvar codeql--templated-query-formats
+  (list :c           "cpp/ql/src/%s.ql"
+        :cpp         "cpp/ql/src/%s.ql"
+        :java        "java/ql/src/%s.ql"
+        :cs          "csharp/ql/src/%s.ql"
+        :javascript  "javascript/ql/src/%s.ql"
+        :python      "python/ql/src/%s.ql"
+        :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
+        :ruby        "ruby/ql/src/ide-contextual-queries/%s.ql"
+        :go          "ql/lib/%s.ql")
+  "A format list for finding templated queries by name")
+
+;; note: filenames in these hash tables will include their tramp prefixes
+
+(defun codeql--process-defs (json src-filename src-root)
+  (unless codeql--definitions-cache
+    (setq codeql--definitions-cache (make-hash-table :test #'equal)))
+  (puthash src-filename (list json src-root) codeql--definitions-cache)
+  (message "Processed definitions for: %s" (file-name-nondirectory src-filename)))
+
+(defun codeql--process-refs (json src-filename src-root)
+  (unless codeql--references-cache
+    (setq codeql--references-cache (make-hash-table :test #'equal)))
+  (puthash src-filename (list json src-root) codeql--references-cache)
+  (message "Processed references for: %s" (file-name-nondirectory src-filename)))
+
+(defun codeql--print-ast (json src-filename src-root)
+  (unless codeql--ast-cache
+    (setq codeql--ast-cache (make-hash-table :test #'equal)))
+  (puthash src-filename (list json src-root) codeql--ast-cache)
+  (message "Processed AST for: %s" (file-name-nondirectory src-filename)))
 
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context &optional src-filename src-root)
