@@ -527,7 +527,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   (setq codeql--references-cache nil)
   (setq codeql--ast-cache nil))
 
-
 (defun codeql--query-server-on-shutdown (obj)
   ;; remove any active database from global database state
   (when codeql--database-dataset-folder
@@ -722,7 +721,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
         (message "Source root verified to exist in trusted path ... extracting.")
         (codeql--shell-command-to-string
          (format "%s %s -d %s"
-                 ;; XXX: double check that executable find works under TRAMP context
                  (executable-find "unzip" (file-remote-p default-directory))
                  (codeql--file-truename codeql--database-source-archive-zip)
                  (codeql--file-truename codeql--database-source-archive-root))))
@@ -1092,7 +1090,6 @@ This applies to both normal evaluation and quick evaluation.")
   ;; XXX: have to find some unicode variant that fits nicely here without breaking alignments
   (replace-regexp-in-string "\\[\\|\\]" (lambda (x) (if (string= x "[") "|" "|")) description))
 
-;; XXX: this needs to deal with various corner cases, build as we use and run into bugs
 (defun codeql--node-to-org (node &optional custom-description)
   "Transform a result node into an org compatible link|string representation."
   ;; https://orgmode.org/guide/Hyperlinks.html
@@ -1101,7 +1098,6 @@ This applies to both normal evaluation and quick evaluation.")
         (cl-assert codeql--database-source-archive-zip t)
         (cl-assert (codeql--file-exists-p codeql--database-source-archive-root) t)
         (let ((filename (codeql--result-node-filename node)))
-          ;; XXX: to alert on any wacky file schemes we might need to support
           ;; we implement a custom org link type so we can add extra sauce on link follow
           (when filename (cl-assert (not (string-match ":" filename)))))
         (let ((link (format "codeql:%s%s::%s"
@@ -1400,8 +1396,7 @@ This applies to both normal evaluation and quick evaluation.")
                     :line  (json-pointer-get region "/startLine")
                     :visitable region
                     ;; build a json alist to parse out for url
-                    :url `(
-                           ,(cons 'uri uri)
+                    :url `(,(cons 'uri uri)
                            ,(cons 'startLine (json-pointer-get region "/startLine"))
                            ,(cons 'startColumn (json-pointer-get region "/startColumn"))
                            ,(cons 'endColumn (json-pointer-get region "/endColumn"))))))
@@ -1986,7 +1981,7 @@ Our implementation simply returns the thing at point as a candidate."
        (codeql--query-server-current-or-error)
        :compilation/compileQuery compile-query-params
        :success-fn
-       (lexical-let ((buffer-context (current-buffer))
+       (lexical-let ((buffer-context buffer-context)
                      (bqrs-path bqrs-path)
                      (qlo-path qlo-path)
                      (query-path query-path)
