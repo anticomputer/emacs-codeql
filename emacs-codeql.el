@@ -911,8 +911,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
            (source-archive-root (json-pointer-get database-info "/sourceArchiveRoot"))
            (database-dataset-folder (json-pointer-get database-info "/datasetFolder")))
 
-      (message "XXX: database language: %s" database-language)
-
       (cl-assert codeql--query-server t)
       (cl-assert database-dataset-folder t)
 
@@ -1430,12 +1428,7 @@ This applies to both normal evaluation and quick evaluation.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert codeql--active-database t)
 
-  (message "XXX: running templated query! %s %s %s" language query-name filename)
   (when-let ((query-path (codeql--templated-query-path language query-name)))
-    (cl-loop for search-path in codeql--search-paths-buffer-local
-             for full-path = (format "%s/%s" search-path query-path)
-             do
-             (message "XXX: checking %s" full-path))
     (cl-loop for search-path in codeql--search-paths-buffer-local
              for full-path = (format "%s/%s" search-path query-path)
              when (codeql--file-exists-p full-path)
@@ -1450,9 +1443,9 @@ This applies to both normal evaluation and quick evaluation.")
                (codeql--query-server-run-query-from-path full-path nil template-values filename))
              ;; respect search precedence and only return from first find
              (cl-return)
+             ;; if we did not return, that means we weren't able to find the thing.
              finally
-             (error "Did not find templated queries in search paths, did you not configure ~/.config/codeql/config?")
-             )))
+             (error "Did not find templated queries in search paths, did you not configure ~/.config/codeql/config?"))))
 
 (defun codeql--database-src-path-p (path)
   (let ((prefix (format "^%s/*" codeql--database-source-archive-root)))
@@ -1626,8 +1619,19 @@ This applies to both normal evaluation and quick evaluation.")
   nil)
 
 (cl-defmethod xref-backend-identifier-completion-table ((_backend (eql codeql)))
-  "Return a list of terms for completions taken from the symbols in the current buffer."
+  "Return a completion list for identifiers.
+
+Our implementation simply returns the thing at point as a candidate."
   ;; just do a dumb thing at point for now so there's not really any completions
+  ;; below is what most folks do for this kind of thing, but I don't think we need it.
+  ;; (let (words)
+  ;;   (save-excursion
+  ;;     (save-restriction
+  ;;       (widen)
+  ;;       (goto-char (point-min))
+  ;;       (while (re-search-forward "\\w+" nil t)
+  ;;         (add-to-list 'words (match-string-no-properties 0)))
+  ;;       (seq-uniq words))))
   (list (codeql--xref-thing-at-point)))
 
 (add-to-list 'xref-backend-functions #'codeql-xref-backend)
