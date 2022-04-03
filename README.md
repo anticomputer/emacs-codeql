@@ -18,6 +18,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 - Org based rendering of path-problem, problem, and raw results
 - Remote query development + evaluation via TRAMP
 - Compatible with [github/gh-codeql](https://github.com/github/gh-codeql) for cli version management
+- CodeQL database source archive Xref support
 
 ## Requirements
 
@@ -248,6 +249,16 @@ kind: `problem` and `path-problem` are rendered as org trees, raw tuple results 
 Results contain source code locations in the form of org links, which can be visited with the normal org mode operations for link handling (e.g. `org-open-at-point`)
 
 `emacs-codeql` will resolve file paths into the project snapshot source code archive included with the database archive. 
+
+## Database source archive Xref support
+
+`emacs-codeql` automatically retrieves references and definitions for database source archive files that are opened from a result buffer org link. It achieves this by registering a custom org-link handler for a `codeql:` link type which then performs a ridiculous elisp ritual to trick emacs into thinking it actually has xref support for these files specifically. 
+
+`emacs-codeql` rudely overrides the default xref bindings for any existing major-mode that might normally take precedence for the type of source file that is opened, but only for files opened from a result buffer.
+
+The `codeql:` link handler sets up a buffer-local context for the opened source file that initializes a custom xref backend, such that the normal emacs `xref-find-definitions` and `xref-find-references` functions (commonly bound to `M-.` and `M-,`) operate as you would expect them to.
+
+Note: references and definitions are fetched asynchronously by running templated queries in the background the first time a given archive file is visited in the current session. When the xref results are available, the xref backend will automagically start working without any further requirements from the user, but it may take a few seconds before they actually become active. On subsequent visits, the xref data is pulled from cache and should be available instantly.
 
 ## Commands
 
