@@ -1466,7 +1466,7 @@ This applies to both normal evaluation and quick evaluation.")
 ;; XXX: build a hashmap of source-file to defs/refs or something?
 ;; XXX: and then make that available in the parent context as cache?
 (defun codeql--org-open-file-link (filename)
-  (message  "XXX: opening filename: %s" filename)
+  ;;(message  "XXX: opening filename: %s" filename)
   (cl-multiple-value-bind (filename line) (split-string filename "::")
     (when (bound-and-true-p codeql--org-parent-buffer)
       (with-current-buffer codeql--org-parent-buffer
@@ -1474,9 +1474,9 @@ This applies to both normal evaluation and quick evaluation.")
           ;; we have an active database in our parent buffer context
           ;; so we'll use that to resolve definitions and references
           (let ((language (intern (format ":%s" codeql--active-database-language))))
-            (message "XXX: checking filename: %s" filename)
+            ;;(message "XXX: checking filename: %s" filename)
             (when (codeql--database-src-path-p filename)
-              (message "XXX: handling a file from database source archive")
+              ;;(message "XXX: handling a file from database source archive")
               ;; don't process more than once, caches are buffer local
               (unless (and codeql--definitions-cache (gethash filename codeql--definitions-cache))
                 (codeql--run-templated-query language "localDefinitions" filename))
@@ -1500,32 +1500,33 @@ This applies to both normal evaluation and quick evaluation.")
 
 ;; note: filenames in these hash tables will include their tramp prefixes
 
-(defun codeql--process-defs (json filename)
-  (message "XXX: processing definitions for: %s" filename)
+(defun codeql--process-defs (json src-filename src-root)
   (unless codeql--definitions-cache
     (setq codeql--definitions-cache (make-hash-table :test #'equal)))
-  (puthash filename json codeql--definitions-cache))
+  (puthash src-filename (list json src-root) codeql--definitions-cache)
+  (message "Processed definitions for: %s" (file-name-nondirectory src-filename)))
 
-(defun codeql--process-refs (json filename)
-  (message "XXX: processing references for: %s" filename)
+(defun codeql--process-refs (json src-filename src-root)
   (unless codeql--references-cache
     (setq codeql--references-cache (make-hash-table :test #'equal)))
-  (puthash filename json codeql--references-cache))
+  (puthash src-filename (list json src-root) codeql--references-cache)
+  (message "Processed references for: %s" (file-name-nondirectory src-filename)))
 
-(defun codeql--print-ast (json filename)
-  (message "XXX: processing AST for: %s" filename)
+(defun codeql--print-ast (json src-filename src-root)
   (unless codeql--ast-cache
     (setq codeql--ast-cache (make-hash-table :test #'equal)))
-  (puthash filename json codeql--ast-cache))
+  (puthash src-filename (list json src-root) codeql--ast-cache)
+  (message "Processed AST for: %s" (file-name-nondirectory src-filename)))
 
 ;; xref backend for our global ref/def caches
 
 (defun codeql-xref-backend ()
   "CodeQL backend for Xref."
-  (message "XXX: xref checking for: %s" (buffer-file-name))
+  ;;(message "XXX: xref checking for: %s" (buffer-file-name))
   (when (and  (gethash (buffer-file-name) codeql--references-cache)
               (gethash (buffer-file-name) codeql--definitions-cache))
-    (message "XXX: buffer has codeql refs/defs available")
+    (message "CodeQL Xref: %s has refs && defs available"
+             (file-name-nondirectory (buffer-file-name)))
     'codeql))
 
 (cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
@@ -1534,7 +1535,31 @@ This applies to both normal evaluation and quick evaluation.")
       (symbol-name current-symbol))))
 
 (cl-defmethod xref-backend-definitions ((_backend (eql codeql)) symbol)
-  (message "XXX: xref definitions"))
+  (cl-multiple-value-bind (json src-root) (gethash (buffer-file-name) codeql--definitions-cache)
+    ;; re-parsing the json for every definition is terribly inefficient
+    ;; so once this works, move into more performant datastructures
+    (when (and json src-root)
+      (cl-loop with tuples = (json-pointer-get json "/#select/tuples")
+               for tuple across tuples
+               for src = (json-pointer-get `((tuple . ,tuple)) "/tuple/0")
+               for dst = (json-pointer-get `((tuple . ,tuple)) "/tuple/1")
+               for src-start-line = (json-pointer-get src "/url/startLine")
+               for src-start-column = (json-pointer-get src "/url/startColumn")
+               for src-end-column = (json-pointer-get src "/url/endColumn")
+               for filename = (format "%s%s" src-root (codeql--uri-to-filename (json-pointer-get dst "/url/uri")))
+               for line = (json-pointer-get dst "/url/startLine")
+               for column = (json-pointer-get dst "/url/startColumn")
+               for desc = (json-pointer-get dst "/label")
+               when
+               ;; columns in emacs are 0-based, columns in codeql are 1 based
+               (let ((point-line (line-number-at-pos))
+                     (point-column (1+ (current-column))))
+                 (and (eql src-start-line point-line)
+                      (<= point-column src-end-column)
+                      (>= point-column src-start-column)))
+               ;; if point is at a ref that we know about, collect the def
+               collect
+               (xref-make desc (xref-make-file-location filename line (1- column)))))))
 
 (cl-defmethod xref-backend-references ((_backend (eql codeql)) symbol)
   (message "XXX: xref references"))
@@ -1549,7 +1574,7 @@ This applies to both normal evaluation and quick evaluation.")
 (add-to-list 'xref-backend-functions 'codeql-xref-backend)
 
 ;; abandon hope, all ye who enter here ...
-(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context &optional src-filename)
+(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id buffer-context &optional src-filename src-root)
   "Parse the results at BQRS-PATH and render them accordingly to the user."
 
   (message "Loading bqrs from %s (name: %s kind: %s id: %s)"
@@ -1601,13 +1626,12 @@ This applies to both normal evaluation and quick evaluation.")
                       ;; json-pointer-get wants list based json
                       :object-type 'alist)))
           (when json
-            (message "XXX: parsed a templated query! DO SOMETHING BOUT IT!")
             (cond ((string-match "/localDefinitions.ql$" query-path)
-                   (codeql--process-defs json src-filename))
+                   (codeql--process-defs json src-filename src-root))
                   ((string-match "/localReferences.ql$" query-path)
-                   (codeql--process-refs json src-filename))
+                   (codeql--process-refs json src-filename src-root))
                   ((string-match "/printAst.ql$" query-path)
-                   (codeql--print-ast json src-filename))))))
+                   (codeql--print-ast json src-filename src-root))))))
 
        ;; SARIF parsing
        ;;
@@ -1806,7 +1830,8 @@ This applies to both normal evaluation and quick evaluation.")
                      (query-path query-path)
                      (db-path db-path)
                      (quick-eval quick-eval)
-                     (src-filename src-filename))
+                     (src-filename src-filename)
+                     (src-root codeql--database-source-archive-root))
          (jsonrpc-lambda (&rest _)
            (message "Query run completed, checking results.")
            ;; if size is > 0 then we have results to deal with
@@ -1835,7 +1860,7 @@ This applies to both normal evaluation and quick evaluation.")
                                         :id ,id)
                           codeql--completed-query-history))
                        ;; display results
-                       (codeql-load-bqrs bqrs-path query-path db-path name kind id buffer-context src-filename))))
+                       (codeql-load-bqrs bqrs-path query-path db-path name kind id buffer-context src-filename codeql--database-source-archive-root))))
                (message "No query results in %s!" bqrs-path)))))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
