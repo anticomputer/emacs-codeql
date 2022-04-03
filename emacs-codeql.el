@@ -1047,6 +1047,7 @@ This applies to both normal evaluation and quick evaluation.")
   (mark              nil :read-only t)
   (filename          nil :read-only t)
   (line              nil :read-only t)
+  (column            nil :read-only t)
   (visitable         nil :read-only t)
   (url               nil :read-only t)
   (code-flow         nil :read-only t)
@@ -1100,11 +1101,13 @@ This applies to both normal evaluation and quick evaluation.")
         (let ((filename (codeql--result-node-filename node)))
           ;; we implement a custom org link type so we can add extra sauce on link follow
           (when filename (cl-assert (not (string-match ":" filename)))))
-        (let ((link (format "codeql:%s%s::%s"
+        ;; since we have our own link type, also add in a column
+        (let ((link (format "codeql:%s%s::%s:%s"
                             ;; we've extracted to the expected location
                             (codeql--tramp-wrap codeql--database-source-archive-root)
                             (codeql--result-node-filename node)
-                            (codeql--result-node-line node)))
+                            (codeql--result-node-line node)
+                            (codeql--result-node-column node)))
               (desc (codeql--result-node-label node)))
           (format "[[%s][%s]]" (org-link-escape link) (codeql--escape-org-description
                                                        (or custom-description desc)))))
@@ -1303,10 +1306,6 @@ This applies to both normal evaluation and quick evaluation.")
   (codeql--result-node-create
    :label message
    :mark "≔"
-   :filename nil
-   :line nil
-   :visitable nil
-   :url nil
    :code-flows
    ;; this returns a list of a list of code-flow paths
    (when code-flows
@@ -1393,7 +1392,8 @@ This applies to both normal evaluation and quick evaluation.")
                                  ;; step for a flow
                                  "..."))
                     :filename (or (codeql--uri-to-filename uri) uri)
-                    :line  (json-pointer-get region "/startLine")
+                    :line (json-pointer-get region "/startLine")
+                    :column (json-pointer-get region "/startColumn")
                     :visitable region
                     ;; build a json alist to parse out for url
                     :url `(,(cons 'uri uri)
@@ -1598,13 +1598,16 @@ Our implementation simply returns the thing at point as a candidate."
 ;; custom org link so we can do voodoo when C-c C-o on a codeql: link
 
 (defun codeql--org-open-file-link (filename)
-  (cl-multiple-value-bind (filename line) (split-string filename "::")
-    (when-let ((src-buffer (find-file-other-window filename)))
-      (with-current-buffer src-buffer
-        (widen)
-        (when line (org-goto-line (string-to-number line)))
-        ;; enable our xref backend
-        (codeql-xref-backend)))))
+  (cl-multiple-value-bind (filename line-column) (split-string filename "::")
+    (cl-multiple-value-bind (line column) (split-string line-column ":")
+      (when-let ((src-buffer (find-file-other-window filename)))
+        (with-current-buffer src-buffer
+          (widen)
+          (when line (org-goto-line (string-to-number line)))
+          ;; XXX: still need to deal with utf-16 code point calc
+          (when column (move-to-column (1- (string-to-number column)) t))
+          ;; enable our xref backend
+          (codeql-xref-backend))))))
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
 
@@ -1820,6 +1823,7 @@ Our implementation simply returns the thing at point as a candidate."
                                                    :filename (codeql--uri-to-filename
                                                               (json-pointer-get element "/url/uri"))
                                                    :line (json-pointer-get element "/url/startLine")
+                                                   :column (json-pointer-get element "/url/startColumn")
                                                    :visitable t
                                                    :url (json-pointer-get element "/url"))))
                                         ;;(message "XXX url node: %s" node)
@@ -1830,11 +1834,7 @@ Our implementation simply returns the thing at point as a candidate."
                                            (not (json-pointer-get element "/url")))
                                       (let ((node (codeql--result-node-create
                                                    :label (json-pointer-get element "/label")
-                                                   :mark "≔"
-                                                   :filename nil
-                                                   :line nil
-                                                   :visitable nil
-                                                   :url nil)))
+                                                   :mark "≔")))
                                         ;;(message "XXX no-url node: %s" node)
                                         (cl-pushnew node row-data)))
 
@@ -1843,11 +1843,7 @@ Our implementation simply returns the thing at point as a candidate."
                                           (eq (type-of element) 'integer))
                                       (let ((node (codeql--result-node-create
                                                    :label element
-                                                   :mark "≔"
-                                                   :filename nil
-                                                   :line nil
-                                                   :visitable nil
-                                                   :url nil)))
+                                                   :mark "≔")))
                                         ;;(message "XXX literal node: %s" node)
                                         (cl-pushnew node row-data)))))
                            ;; represent each tuple as a row of node columns
