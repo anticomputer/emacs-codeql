@@ -502,7 +502,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
 (defun codeql--reset-database-state ()
   "Clear out all the buffer-local database state."
-  (remhash codeql--database-source-archive-root codeql--active-source-roots-with-buffers)
+  (remhash (codeql--tramp-wrap codeql--database-source-archive-root) codeql--active-source-roots-with-buffers)
   (setq codeql--active-database nil)
   (setq codeql--active-database-language nil)
   (setq codeql--database-dataset-folder nil)
@@ -947,7 +947,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
              ;; global addition can be asynchronous, so we do that on success only
              (codeql--active-datasets-add database-dataset-folder (current-buffer))
              ;; associate the source root with the query buffer globally for xref support
-             (puthash source-archive-root (current-buffer) codeql--active-source-roots-with-buffers)
+             (puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
              ;; save in database selection history
              (puthash database-path database-path codeql--registered-database-history)
              ;; these variables are buffer-local to ql-tree-sitter-mode
@@ -1551,7 +1551,7 @@ a codeql database source archive."
                       (>= point-column src-start-column)))
                ;; if point is at a ref that we know about, collect the def
                collect
-               (xref-make desc (xref-make-file-location filename line (1- column)))))))
+               (xref-make desc (xref-make-file-location (codeql--tramp-wrap filename) line (1- column)))))))
 
 (cl-defmethod xref-backend-references ((_backend (eql codeql)) symbol)
   "Get known references for location at point."
@@ -1577,7 +1577,7 @@ a codeql database source archive."
                       (>= point-column dst-start-column)))
                ;; if point is at a def that we know about, collect the ref
                collect
-               (xref-make desc (xref-make-file-location filename line (1- column)))))))
+               (xref-make desc (xref-make-file-location (codeql--tramp-wrap filename) line (1- column)))))))
 
 ;; XXX: TODO
 (cl-defmethod xref-backend-apropos ((_backend (eql codeql)) symbol)
