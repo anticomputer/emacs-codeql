@@ -228,10 +228,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   "Return any currently configured codeql cli search paths."
   (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
-;; cache version info for CodeQL CLI
-(defvar-local codeql--cli-info nil
-  "A cached copy of the current codeql cli version.")
-
 ;; Projectile configuration
 (when codeql-configure-projectile
   (require 'projectile)
@@ -306,11 +302,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 
   ;; ensure we were able to resolve _A_ path for the codeql cli local|remote execution
   (cl-assert codeql--cli-buffer-local t)
-
-  ;; do any final init we need here
-  (setq codeql--cli-info (codeql--get-cli-version))
-
-  (cl-assert codeql--cli-info t)
 
   ;; ensure we have the eglot LSP client setup if folks want it
   ;; catch any errors so we don't fail just because the LSP fails
@@ -1717,15 +1708,11 @@ Our implementation simply returns the thing at point as a candidate."
              (mapconcat #'identity '("#+QUERY_TIME: %s"
                                      "#+BQRS_PATH: %s"
                                      "#+QUERY_PATH: %s"
-                                     "#+DB_PATH: %s"
-                                     "#+BEGIN_CODEQL_VERSION"
-                                     "%s"
-                                     "#+END_CODEQL_VERSION") "\n")
+                                     "#+DB_PATH: %s") "\n")
              (current-time-string)
              bqrs-path
              query-path
-             db-path
-             codeql--cli-info) "\n")))
+             db-path) "\n")))
       ;; parse results according to the query meta data
       (cond
 
