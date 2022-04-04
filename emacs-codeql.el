@@ -85,11 +85,6 @@
 ;; my own workflows and requirements for codeql use. However, if you find it
 ;; useful and do run into problems, do please file an issue :)
 
-;;; TODO
-
-;; * add printAST support
-;; * add source archive xref and region annotation support
-
 ;;; Code:
 
 ;; part of emacs
@@ -1094,7 +1089,7 @@ This applies to both normal evaluation and quick evaluation.")
   ;; XXX: have to find some unicode variant that fits nicely here without breaking alignments
   (replace-regexp-in-string "\\[\\|\\]" (lambda (x) (if (string= x "[") "|" "|")) description))
 
-(defun codeql--node-to-org (node &optional custom-description)
+(defun codeql--result-node-to-org (node &optional custom-description)
   "Transform a result node into an org compatible link|string representation."
   ;; https://orgmode.org/guide/Hyperlinks.html
   (if (codeql--result-node-visitable node)
@@ -1117,6 +1112,11 @@ This applies to both normal evaluation and quick evaluation.")
     ;; not visitable, just return the label
     (format "%s" (codeql--result-node-label node))))
 
+(defun codeql--ast-node-to-org (node &optional custom-description)
+  "Transform an AST node into an org compatible link|string representation."
+  ;; https://orgmode.org/guide/Hyperlinks.html
+  (message "XXX: fill me in"))
+
 (defun codeql--org-list-from-nodes (parent-buffer nodes &optional header)
   "Turn a given list of PARENT-BUFFER context location NODES into an org-list, setting an optional HEADER."
   (with-temp-buffer
@@ -1131,16 +1131,16 @@ This applies to both normal evaluation and quick evaluation.")
                       (or (codeql--result-node-mark node) " ")
                       ;; make sure we have our buffer-local db state
                       (with-current-buffer parent-buffer
-                        (codeql--node-to-org node))))
+                        (codeql--result-node-to-org node))))
                     (suffix
                      (if-let ((url (codeql--result-node-url node)))
                          (format "%s:%s:%s"
                                  ;; set a custom description for this link
                                  (with-current-buffer parent-buffer
-                                   (codeql--node-to-org node
-                                                        (file-name-nondirectory
-                                                         (codeql--uri-to-filename
-                                                          (json-pointer-get url "/uri")))))
+                                   (codeql--result-node-to-org node
+                                                               (file-name-nondirectory
+                                                                (codeql--uri-to-filename
+                                                                 (json-pointer-get url "/uri")))))
                                  ;; org links don't support column offsets
                                  ;; so this is mostly just eye candy :P
                                  (json-pointer-get url "/startLine")
@@ -1200,7 +1200,7 @@ This applies to both normal evaluation and quick evaluation.")
                                                                  (lambda (node)
                                                                    ;; we use buffer-local variables here
                                                                    (with-current-buffer parent-buffer
-                                                                     (codeql--node-to-org node))))
+                                                                     (codeql--result-node-to-org node))))
                                                                row-data) ",")))
                                         query-results) "\n")))
               ;; this returns raw org data, does NOT render to a display buffer
@@ -1225,11 +1225,11 @@ This applies to both normal evaluation and quick evaluation.")
                                          (or (codeql--result-node-mark issue) " ")
                                          (codeql--result-node-rule-id issue)
                                          (with-current-buffer parent-buffer
-                                           (codeql--node-to-org
+                                           (codeql--result-node-to-org
                                             location
                                             (codeql--result-node-label issue)))
                                          (with-current-buffer parent-buffer
-                                           (codeql--node-to-org
+                                           (codeql--result-node-to-org
                                             location
                                             (file-name-nondirectory
                                              (codeql--uri-to-filename
