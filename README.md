@@ -18,8 +18,8 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 - Org based rendering of path-problem, problem, and raw results
 - Remote query development + evaluation via TRAMP
 - Compatible with [github/gh-codeql](https://github.com/github/gh-codeql) for cli version management
-- Database source archive Xref support
-- AST Viewer
+- Database source archive xref backend support
+- AST Viewer with xref backend support
 
 ## Requirements
 
@@ -272,6 +272,8 @@ It is left as a matter of user preference whether to invoke `codeql-xref-backend
 Just like the vscode extension, `emacs-codeql` lets you browse the AST of a database source archive file. Similar to the other results buffers, the AST is rendered as an org-mode tree. You can invoke the AST viewer with `M-x RET codeql-view-ast RET` for a database source archive file. 
 
 ![screenshot](img/codeql-ast-viewer.png?raw=true "emacs-codeql")
+
+There is AST xref support bound to `M->` in any database source file that also has an active AST viewer buffer open.
 
 ## Commands
 
