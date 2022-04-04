@@ -1803,13 +1803,13 @@ Our implementation simply returns the thing at point as a candidate."
       (let ((sorted-tree (codeql--sort-tree roots)))
         (message "Tree is sorted (%d roots) ... rendering." (length sorted-tree))
         ;; render with buffer context
-        (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-                 with filename = (buffer-file-name)
-                 when (string-match source-root filename)
+        (cl-loop for active-source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
+                 with filename = (codeql--tramp-wrap (format "%s%s" src-root src-filename))
+                 when (string-match active-source-root filename)
                  do
-                 (message "Active buffer context available to render AST with")
+                 (message "Active buffer context available to render AST for %s" filename)
                  ;; hail to the guardians of the watch towers of the north.
-                 (let ((buffer-context (gethash source-root codeql--active-source-roots-with-buffers)))
+                 (let ((buffer-context (gethash active-source-root codeql--active-source-roots-with-buffers)))
                    (codeql--ast-to-org sorted-tree src-filename buffer-context))
                  ;; donezo.
                  (cl-return)
