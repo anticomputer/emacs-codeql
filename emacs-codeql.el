@@ -1947,6 +1947,7 @@ We use this to provide backwards references into the AST buffer from the source 
                (message "Did not recognize this file as being part of an active codeql database.")))))
 
 (defun codeql--process-ast (json src-filename src-root)
+  ;; only allow this to be called as part of a templated flow
   (puthash src-filename (list json src-root) codeql--ast-cache)
   (codeql--render-ast json src-root src-filename))
 
@@ -1994,17 +1995,21 @@ We use this to provide backwards references into the AST buffer from the source 
        ((or (string-match "/localDefinitions.ql$" query-path)
             (string-match "/localReferences.ql$" query-path)
             (string-match "/printAst.ql$" query-path))
-        (let* ((json (json-parse-string
-                      (codeql--bqrs-to-json bqrs-path "id,url,string")
-                      ;; json-pointer-get wants list based json
-                      :object-type 'alist)))
-          (when json
-            (cond ((string-match "/localDefinitions.ql$" query-path)
-                   (codeql--process-defs json src-filename src-root))
-                  ((string-match "/localReferences.ql$" query-path)
-                   (codeql--process-refs json src-filename src-root))
-                  ((string-match "/printAst.ql$" query-path)
-                   (codeql--process-ast json src-filename src-root))))))
+
+        ;; don't let these be entered from query history
+        (if (and src-filename src-root)
+            (let* ((json (json-parse-string
+                          (codeql--bqrs-to-json bqrs-path "id,url,string")
+                          ;; json-pointer-get wants list based json
+                          :object-type 'alist)))
+              (when json
+                (cond ((string-match "/localDefinitions.ql$" query-path)
+                       (codeql--process-defs json src-filename src-root))
+                      ((string-match "/localReferences.ql$" query-path)
+                       (codeql--process-refs json src-filename src-root))
+                      ((string-match "/printAst.ql$" query-path)
+                       (codeql--process-ast json src-filename src-root)))))
+          (message "Can't process templated query without src-filename and src-root.")))
 
        ;; SARIF parsing
        ;;
@@ -2210,21 +2215,25 @@ We use this to provide backwards references into the AST buffer from the source 
                            (kind (json-pointer-get query-info "/kind"))
                            (id (json-pointer-get query-info "/id")))
                        (let ((timestamp (current-time-string)))
-                         (puthash
-                          (format "[%s] %s (%s) [%s]"
-                                  timestamp
-                                  (file-name-nondirectory query-path)
-                                  (if quick-eval "quick-eval" "full-query")
-                                  (codeql-query-server-active-database))
-                          `(:quick-eval ,quick-eval
-                                        :query-path ,query-path
-                                        :bqrs-path ,bqrs-path
-                                        :db-path ,db-path
-                                        :timestamp ,timestamp
-                                        :name ,name
-                                        :kind ,kind
-                                        :id ,id)
-                          codeql--completed-query-history))
+                         ;; skip templated queries in query history
+                         (unless (or (string-match "/localDefinitions.ql$" query-path)
+                                     (string-match "/localReferences.ql$" query-path)
+                                     (string-match "/printAst.ql$" query-path))
+                           (puthash
+                            (format "[%s] %s (%s) [%s]"
+                                    timestamp
+                                    (file-name-nondirectory query-path)
+                                    (if quick-eval "quick-eval" "full-query")
+                                    (codeql-query-server-active-database))
+                            `(:quick-eval ,quick-eval
+                                          :query-path ,query-path
+                                          :bqrs-path ,bqrs-path
+                                          :db-path ,db-path
+                                          :timestamp ,timestamp
+                                          :name ,name
+                                          :kind ,kind
+                                          :id ,id)
+                            codeql--completed-query-history)))
                        ;; display results
                        (codeql-load-bqrs bqrs-path query-path db-path name kind id src-filename codeql--database-source-archive-root))))
                (message "No query results in %s!" bqrs-path)))))
