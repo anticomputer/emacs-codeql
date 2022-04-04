@@ -1353,6 +1353,7 @@ This applies to both normal evaluation and quick evaluation.")
                     :mark "-->"
                     :filename (or (codeql--uri-to-filename uri) uri)
                     :line  (json-pointer-get region "/startLine")
+                    :column (json-pointer-get region "/startColumn")
                     :visitable region
                     ;; build a json alist to parse out for url
                     :url `(
