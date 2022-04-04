@@ -1084,9 +1084,10 @@ This applies to both normal evaluation and quick evaluation.")
          (message "Rendering failed (too many results?) Returning raw CSV.")
          (buffer-string))))))
 
-(defun codeql--escape-org-description (description br-open br-close)
+(defun codeql--escape-org-description (description &optional br-open br-close)
   "Replace [] with something harmless in org link descriptions."
-  (replace-regexp-in-string "\\[\\|\\]" (lambda (x) (if (string= x "[") br-open br-close)) description))
+  (replace-regexp-in-string "\\[\\|\\]"
+                            (lambda (x) (if (string= x "[") (or br-open "|") (or br-close "|"))) description))
 
 (defun codeql--result-node-to-org (node &optional custom-description br-open br-close)
   "Transform a result node into an org compatible link|string representation."
@@ -1108,7 +1109,7 @@ This applies to both normal evaluation and quick evaluation.")
               (desc (codeql--result-node-label node)))
           (format "[[%s][%s]]" (org-link-escape link)
                   (codeql--escape-org-description
-                   (or custom-description desc) (or br-open "|") (or br-close "|")))))
+                   (or custom-description desc) br-open br-close))))
     ;; not visitable, just return the label
     (format "%s" (codeql--result-node-label node))))
 
@@ -1463,22 +1464,29 @@ This applies to both normal evaluation and quick evaluation.")
     (when current-symbol
       (symbol-name current-symbol))))
 
+;; not what I meant when I said I was looking for closure :/
 (defun codeql--set-local-xref-bindings ()
   (unless codeql--xref-has-bindings
     (use-local-map (copy-keymap (symbol-value (intern (format "%s-map" major-mode)))))
+    (local-set-key (kbd "M->")
+                   ;; hail to the guardians of the watch towers of the west.
+                   (lambda (identifier)
+                     (interactive (list (codeql--xref-thing-at-point)))
+                     (cl-letf (((symbol-value 'xref-backend-functions) (list (lambda () 'codeql-ast))))
+                       (xref-find-definitions identifier))))
     (local-set-key (kbd "M-.")
-                   (lexical-let ((xref-backend-functions '(codeql-xref-backend)))
-                     (lambda (identifier)
-                       ;;(interactive (list (xref--read-identifier "Find definitions of: ")))
-                       ;; skip the completion crud, since lookups are point/location based
-                       (interactive (list (codeql--xref-thing-at-point)))
+                   (lambda (identifier)
+                     ;;(interactive (list (xref--read-identifier "Find definitions of: ")))
+                     ;; skip the completion crud, since lookups are point/location based
+                     (interactive (list (codeql--xref-thing-at-point)))
+                     (cl-letf (((symbol-value 'xref-backend-functions) '(codeql-xref-backend)))
                        (xref-find-definitions identifier))))
     (local-set-key (kbd "M-?")
-                   (lexical-let ((xref-backend-functions '(codeql-xref-backend)))
-                     (lambda (identifier)
-                       ;;(interactive (list (xref--read-identifier "Find references of: ")))
-                       ;; skip the completion crud, since lookups are point/location based
-                       (interactive (list (codeql--xref-thing-at-point)))
+                   (lambda (identifier)
+                     ;;(interactive (list (xref--read-identifier "Find references of: ")))
+                     ;; skip the completion crud, since lookups are point/location based
+                     (interactive (list (codeql--xref-thing-at-point)))
+                     (cl-letf (((symbol-value 'xref-backend-functions) '(codeql-xref-backend)))
                        (xref-find-references identifier))))
     (local-set-key (kbd "M-,") #'xref-pop-marker-stack)
     ;; source archive files are for browsing only!
@@ -1527,6 +1535,44 @@ a codeql database source archive."
   "Return the thing at point."
   ;; we get away with this because really our codeql xref lookups are based on position
   (codeql--xref-thing-at-point))
+
+;; implement a special backend definition just for AST definitions
+(cl-defmethod xref-backend-definitions ((_backend (eql codeql-ast)) symbol)
+  "Show any AST definitions available for the thing at point."
+  (when-let ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
+    (let ((candidates
+           (cl-loop for ast-def in (hash-table-keys ast-definitions)
+                    for ast-buffer = (gethash ast-def ast-definitions)
+                    for ast-def-seq = (split-string ast-def ":")
+                    for src-line = (string-to-number (seq-elt ast-def-seq 0))
+                    for src-start-column = (string-to-number (seq-elt ast-def-seq 1))
+                    for src-end-column = (string-to-number (seq-elt ast-def-seq 2))
+                    for ast-line = (string-to-number (seq-elt ast-def-seq 3))
+                    for point-line = (line-number-at-pos)
+                    for point-column = (codeql-lsp-abiding-column)
+                    when (and (buffer-live-p ast-buffer)
+                              (eql point-line src-line)
+                              (>= point-column src-start-column)
+                              (<= point-column src-end-column))
+                    ;; collect candidates, car is diff between point-column and src-start-column
+                    ;; the smallest diff is the closest match from point
+                    collect
+                    (list (- point-column src-start-column) ast-buffer ast-line))))
+      ;; sort the candidates by diff and return the closest match as an xref
+      (let ((closest-match (car (sort candidates (lambda (a b) (< (car a) (car b)))))))
+        (cl-multiple-value-bind (diff ast-buffer ast-line) closest-match
+          ;; append result to the normal definitions
+          (when (and ast-buffer (buffer-live-p ast-buffer))
+            (list
+             (xref-make "[AST] show thing-at-point in AST buffer."
+                        (xref-make-buffer-location
+                         ast-buffer
+                         (save-excursion
+                           (with-current-buffer ast-buffer
+                             (goto-line ast-line)
+                             (move-end-of-line nil)
+                             (pulse-momentary-highlight-one-line (point))
+                             (point))))))))))))
 
 (cl-defmethod xref-backend-definitions ((_backend (eql codeql)) symbol)
   "Get known definitions for location at point."
@@ -1778,6 +1824,11 @@ Our implementation simply returns the thing at point as a candidate."
       (org-mode)
       (switch-to-buffer-other-window (current-buffer)))))
 
+(defvar codeql--ast-backwards-definitions (make-hash-table :test #'equal)
+  "A hash table of src-filename -> hash table { AST buffer line : source file location }.
+
+We use this to provide backwards references into the AST buffer from the source file.")
+
 (defun codeql--render-node (node level &optional buffer-context)
   (insert
    (concat
@@ -1789,17 +1840,53 @@ Our implementation simply returns the thing at point as a candidate."
                       ;; line == 0 means no location available
                       (line (and (> (codeql--result-node-line result-node) 0)
                                  (codeql--result-node-line result-node))))
-                ;; go into the active query buffer context and resolve from database
-                (save-excursion
-                  (with-current-buffer buffer-context
-                    (format "%s %s%s"
-                            (codeql--ast-item-label node)
-                            (codeql--result-node-to-org
-                             result-node
-                             "⧉"
-                             "〚" "〛")
-                            ;; only add Line stamp to roots
-                            (if (codeql--ast-item-parent node) "" (format " Line %s" line)))))
+
+                ;; XXX: doing this as part of the render isn't ideal perf wise
+
+                (progn
+
+                  ;; init ast reference cache if need be
+                  (let* ((src-filename (codeql--result-node-filename result-node))
+                         ;; XXX: double check under TRAMP
+                         (full-src-path
+                          (with-current-buffer buffer-context
+                            (format (codeql--tramp-wrap
+                                     (format "%s%s"
+                                             codeql--database-source-archive-root
+                                             src-filename))))))
+                    (unless (gethash full-src-path codeql--ast-backwards-definitions)
+                      (puthash full-src-path (make-hash-table :test #'equal)
+                               codeql--ast-backwards-definitions)))
+
+                  ;; there's backwards messages in this stuff
+                  (let* ((src-filename (codeql--result-node-filename result-node))
+                         (full-src-path
+                          (with-current-buffer buffer-context
+                            (format (codeql--tramp-wrap
+                                     (format "%s%s"
+                                             codeql--database-source-archive-root
+                                             src-filename)))))
+                         (ast-line (line-number-at-pos))
+                         (ast-lookup-table (gethash full-src-path codeql--ast-backwards-definitions))
+                         (entity-url (codeql--result-node-url result-node))
+                         (src-line (json-pointer-get entity-url "/startLine"))
+                         (src-start-column (json-pointer-get entity-url "/startColumn"))
+                         (src-end-column (json-pointer-get entity-url "/endColumn")))
+                    ;; make all the info we need to build an AST definition available from our xref backend
+                    (puthash (format "%s:%s:%s:%s" src-line src-start-column src-end-column ast-line)
+                             (current-buffer) ast-lookup-table))
+
+                  ;; go into the active query buffer context and resolve from database
+                  (save-excursion
+                    (with-current-buffer buffer-context
+                      (format "%s %s%s"
+                              (codeql--ast-item-label node)
+                              (codeql--result-node-to-org
+                               result-node
+                               "⧉"
+                               "〚" "〛")
+                              ;; only add Line stamp to roots
+                              (if (codeql--ast-item-parent node) "" (format " Line %s" line))))))
               ;; if not, just return a plain text heading
               (codeql--ast-item-label node))) "\n"))
   ;; hail to the guardians of the watch towers of the south.
