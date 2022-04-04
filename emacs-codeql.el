@@ -1084,12 +1084,11 @@ This applies to both normal evaluation and quick evaluation.")
          (message "Rendering failed (too many results?) Returning raw CSV.")
          (buffer-string))))))
 
-(defun codeql--escape-org-description (description)
-  "Replace org-link special with something harmless."
-  ;; XXX: have to find some unicode variant that fits nicely here without breaking alignments
-  (replace-regexp-in-string "\\[\\|\\]" (lambda (x) (if (string= x "[") "|" "|")) description))
+(defun codeql--escape-org-description (description br-open br-close)
+  "Replace [] with something harmless in org link descriptions."
+  (replace-regexp-in-string "\\[\\|\\]" (lambda (x) (if (string= x "[") br-open br-close)) description))
 
-(defun codeql--result-node-to-org (node &optional custom-description)
+(defun codeql--result-node-to-org (node &optional custom-description br-open br-close)
   "Transform a result node into an org compatible link|string representation."
   ;; https://orgmode.org/guide/Hyperlinks.html
   (if (codeql--result-node-visitable node)
@@ -1107,15 +1106,11 @@ This applies to both normal evaluation and quick evaluation.")
                             (codeql--result-node-line node)
                             (codeql--result-node-column node)))
               (desc (codeql--result-node-label node)))
-          (format "[[%s][%s]]" (org-link-escape link) (codeql--escape-org-description
-                                                       (or custom-description desc)))))
+          (format "[[%s][%s]]" (org-link-escape link)
+                  (codeql--escape-org-description
+                   (or custom-description desc) (or br-open "|") (or br-close "|")))))
     ;; not visitable, just return the label
     (format "%s" (codeql--result-node-label node))))
-
-(defun codeql--ast-node-to-org (node &optional custom-description)
-  "Transform an AST node into an org compatible link|string representation."
-  ;; https://orgmode.org/guide/Hyperlinks.html
-  (message "XXX: fill me in"))
 
 (defun codeql--org-list-from-nodes (parent-buffer nodes &optional header)
   "Turn a given list of PARENT-BUFFER context location NODES into an org-list, setting an optional HEADER."
@@ -1646,8 +1641,9 @@ Our implementation simply returns the thing at point as a candidate."
   (parent            nil :read-only nil)
   (label             nil :read-only t)
   (location          nil :read-only t)
-  (children          [] :read-only nil)
-  (order             nil :read-only nil))
+  (children          []  :read-only nil)
+  (order             nil :read-only nil)
+  (result-node       nil :read-only nil))
 
 (defun codeql--valid-graph-p (graph-props)
   (cl-loop for prop across (json-pointer-get graph-props "/tuples")
@@ -1688,7 +1684,8 @@ Our implementation simply returns the thing at point as a candidate."
                         (puthash source-id (vconcat children `[,target-id]) parent-to-children))
                       (condition-case nil
                           (cl-parse-integer value)
-                        (error (puthash target-id value edge-labels))))))
+                        (error
+                         (puthash target-id value edge-labels))))))
 
       ;; round 2
       (cl-loop for tuple across (json-pointer-get node-tuples "/tuples")
@@ -1706,20 +1703,36 @@ Our implementation simply returns the thing at point as a candidate."
                (cond ((string= tuple-type "semmle.order")
                       (puthash entity-id (string-to-number value) ast-order))
                      ((string= tuple-type "semmle.label")
+
+                      ;; create an AST item node
                       (let ((item (codeql--ast-item-create
                                    :id entity-id
                                    :label label
                                    :location entity-url
                                    :children [])))
 
+                        ;; tag on a location result node for our org renderer to use
+                        (when entity-url
+                          (setf (codeql--ast-item-result-node item)
+                                (codeql--result-node-create
+                                 :label label
+                                 :mark ""
+                                 :filename (codeql--uri-to-filename (json-pointer-get entity-url "/uri"))
+                                 :line (json-pointer-get entity-url "/startLine")
+                                 :column (json-pointer-get entity-url "/startColumn")
+                                 :visitable t
+                                 :url entity-url)))
+
                         (puthash entity-id item id-to-item)
 
+                        ;; check if this item has a known parent
                         (when-let ((parent (gethash (gethash entity-id child-to-parent) id-to-item)))
                           (setf (codeql--ast-item-parent item) parent)
                           (setf (codeql--ast-item-children parent) (vconcat (codeql--ast-item-children parent) `[,item])))
 
+                        ;; check if this item has known children, children is a vector
                         (when-let ((children (gethash entity-id parent-to-children)))
-                          (cl-loop for child-id in children
+                          (cl-loop for child-id across children
                                    for child = (gethash child-id id-to-item)
                                    when child
                                    do
@@ -1730,31 +1743,61 @@ Our implementation simply returns the thing at point as a candidate."
       (cl-maphash
        (lambda (_ item)
          (setf (codeql--ast-item-order item) (or (gethash (codeql--ast-item-id item) ast-order) most-positive-fixnum))
-         (unless (codeql--ast-item-parent item)
+         (unless (or (codeql--ast-item-parent item))
            (setq roots (vconcat roots `[,item]))))
        id-to-item)
 
       ;; round 4: ding ding ding,  order and render
       (let ((sorted-tree (codeql--sort-tree roots)))
-        (message "Tree is sorted (%d roots)." (length sorted-tree))
-        (with-current-buffer (get-buffer-create (format "* AST viewer: %s *" src-filename))
-          (codeql--render-tree sorted-tree)
-          (setq buffer-read-only t)
-          (save-excursion
-            (goto-char (point-min))
-            (org-mode)
-            (switch-to-buffer-other-window (current-buffer))))))))
+        (message "Tree is sorted (%d roots) ... rendering." (length sorted-tree))
+        ;; render with buffer context
+        (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
+                 with filename = (buffer-file-name)
+                 when (string-match source-root filename)
+                 do
+                 (message "Active buffer context available to render AST with")
+                 ;; hail to the guardians of the watch towers of the north.
+                 (let ((buffer-context (gethash source-root codeql--active-source-roots-with-buffers)))
+                   (codeql--ast-to-org sorted-tree src-filename buffer-context))
+                 ;; donezo.
+                 (cl-return)
+                 ;; fall back to plaintext rendering
+                 finally
+                 (message "No active buffer context available to render AST with, going to plaintext.")
+                 (codeql--ast-to-org sorted-tree src-filename))))))
 
-(defun codeql--render-node (node level)
-  (insert (concat (format "%s %s" level (codeql--ast-item-label node)) "\n"))
+(defun codeql--ast-to-org (sorted-tree src-filename &optional buffer-context)
+  (with-current-buffer (get-buffer-create (format "* AST viewer: %s *" src-filename))
+    (setq buffer-read-only nil)
+    (erase-buffer)
+    (insert (format "#+CODEQL_AST_VIEWER: %s\n\n" (file-name-nondirectory src-filename)))
+    (codeql--render-tree sorted-tree buffer-context)
+    (goto-char (point-min))
+    (setq buffer-read-only t)
+    (save-excursion
+      (org-mode)
+      (switch-to-buffer-other-window (current-buffer)))))
+
+(defun codeql--render-node (node level &optional buffer-context)
+  (insert (concat
+           (format "%s %s" level
+                   (if-let ((result-node (and buffer-context (codeql--ast-item-result-node node))))
+                       ;; if we have a buffer-context, use that to resolve org links
+                       (save-excursion
+                         (with-current-buffer buffer-context
+                           (format "%s Line %s"
+                                   (codeql--result-node-to-org result-node nil "〚" "〛")
+                                   (codeql--result-node-line result-node))))
+                     ;; if not, just return a plain text heading
+                     (codeql--ast-item-label node))) "\n"))
   (cl-loop for node across (codeql--ast-item-children node)
            do
            (codeql--render-node node (concat level "*"))))
 
-(defun codeql--render-tree (tree)
+(defun codeql--render-tree (tree &optional buffer-context)
   (cl-loop for root across tree
            do
-           (codeql--render-node root "*")))
+           (codeql--render-node root "*" buffer-context)))
 
 (defun codeql--sort-node (node)
   ;; sort this node's children
@@ -1774,8 +1817,6 @@ Our implementation simply returns the thing at point as a candidate."
   (message "Sorting tree!")
   (sort tree (lambda (left right)
                (< (codeql--ast-item-order left) (codeql--ast-item-order right)))))
-
-
 
 (defun codeql-view-ast ()
   "Display the AST for the current source archive file."
