@@ -1541,8 +1541,8 @@ a codeql database source archive."
     (when (and json src-root)
       (cl-loop with tuples = (json-pointer-get json "/#select/tuples")
                for tuple across tuples
-               for src = (json-pointer-get `((tuple . ,tuple)) "/tuple/0")
-               for dst = (json-pointer-get `((tuple . ,tuple)) "/tuple/1")
+               for src = (seq-elt tuple 0)
+               for dst = (seq-elt tuple 1)
                for src-start-line = (json-pointer-get src "/url/startLine")
                for src-start-column = (json-pointer-get src "/url/startColumn")
                for src-end-column = (json-pointer-get src "/url/endColumn")
@@ -1569,8 +1569,8 @@ a codeql database source archive."
     (when (and json src-root)
       (cl-loop with tuples = (json-pointer-get json "/#select/tuples")
                for tuple across tuples
-               for src = (json-pointer-get `((tuple . ,tuple)) "/tuple/0")
-               for dst = (json-pointer-get `((tuple . ,tuple)) "/tuple/1")
+               for src = (seq-elt tuple 0)
+               for dst = (seq-elt tuple 1)
                for dst-start-line = (json-pointer-get dst "/url/startLine")
                for dst-start-column = (json-pointer-get dst "/url/startColumn")
                for dst-end-column = (json-pointer-get dst "/url/endColumn")
@@ -1639,8 +1639,143 @@ Our implementation simply returns the thing at point as a candidate."
 
 ;; AST viewer
 
+(cl-defstruct (codeql--ast-item
+               (:constructor codeql--ast-item-create)
+               (:copier nil))
+  (id                nil :read-only t)
+  (parent            nil :read-only nil)
+  (label             nil :read-only t)
+  (location          nil :read-only t)
+  (children          [] :read-only nil)
+  (order             nil :read-only nil))
+
+(defun codeql--valid-graph-p (graph-props)
+  (cl-loop for prop across (json-pointer-get graph-props "/tuples")
+           when (and (string= (seq-elt prop 0) "semmle.graphKind")
+                     (string= (seq-elt prop 1) "tree"))
+           do
+           (cl-return t)))
+
 (defun codeql--render-ast (json src-root src-filename)
-  (message "Rendering AST"))
+  (message "Rendering AST")
+  ;; oh boy.
+  (let ((id-to-item (make-hash-table :test #'equal))
+        (parent-to-children (make-hash-table :test #'equal))
+        (child-to-parent (make-hash-table :test #'equal))
+        (ast-order (make-hash-table :test #'equal))
+        (roots [])
+        (edge-labels (make-hash-table :test #'equal))
+
+        (node-tuples (json-pointer-get json "/nodes"))
+        (edge-tuples (json-pointer-get json "/edges"))
+        (graph-props (json-pointer-get json "graphProperties")))
+    (when (codeql--valid-graph-p graph-props)
+
+      ;; round 1
+      (cl-loop for tuple across (json-pointer-get edge-tuples "/tuples")
+               for source = (seq-elt tuple 0)
+               for target = (seq-elt tuple 1)
+               for tuple-type = (seq-elt tuple 2)
+               for value = (seq-elt tuple 3)
+               for source-id = (json-pointer-get source "/id")
+               for target-id = (json-pointer-get target "/id")
+               do
+               (cond ((string= tuple-type "semmle.order")
+                      (puthash target-id (string-to-number value) ast-order))
+                     ((string= tuple-type "semmle.label")
+                      (puthash target-id source-id child-to-parent)
+                      (let ((children (gethash source-id parent-to-children)))
+                        (puthash source-id (vconcat children `[,target-id]) parent-to-children))
+                      (condition-case nil
+                          (cl-parse-integer value)
+                        (error (puthash target-id value edge-labels))))))
+
+      ;; round 2
+      (cl-loop for tuple across (json-pointer-get node-tuples "/tuples")
+               for entity = (seq-elt tuple 0)
+               for tuple-type = (seq-elt tuple 1)
+               for value = (seq-elt tuple 2)
+               for entity-id = (json-pointer-get entity "/id")
+               for entity-label = (json-pointer-get entity "/label")
+               for entity-url = (json-pointer-get entity "/url")
+               ;; XXX: double check value isn't "" here
+               for node-label = (or value entity-label)
+               for edge-label = (gethash entity-id edge-labels)
+               for label = (if edge-label (format "%s: %s" edge-label node-label) node-label)
+               do
+               (cond ((string= tuple-type "semmle.order")
+                      (puthash entity-id (string-to-number value) ast-order))
+                     ((string= tuple-type "semmle.label")
+                      (let ((item (codeql--ast-item-create
+                                   :id entity-id
+                                   :label label
+                                   :location entity-url
+                                   :children [])))
+
+                        (puthash entity-id item id-to-item)
+
+                        (when-let ((parent (gethash (gethash entity-id child-to-parent) id-to-item)))
+                          (setf (codeql--ast-item-parent item) parent)
+                          (setf (codeql--ast-item-children parent) (vconcat (codeql--ast-item-children parent) `[,item])))
+
+                        (when-let ((children (gethash entity-id parent-to-children)))
+                          (cl-loop for child-id in children
+                                   for child = (gethash child-id id-to-item)
+                                   when child
+                                   do
+                                   (setf (codeql--ast-item-parent child) item)
+                                   (setf (codeql--ast-item-children item) (vconcat (codeql--ast-item-children item) `[,child]))))))))
+
+      ;; round 3: sort the tree
+      (cl-maphash
+       (lambda (_ item)
+         (setf (codeql--ast-item-order item) (or (gethash (codeql--ast-item-id item) ast-order) most-positive-fixnum))
+         (unless (codeql--ast-item-parent item)
+           (setq roots (vconcat roots `[,item]))))
+       id-to-item)
+
+      ;; round 4: ding ding ding,  order and render
+      (let ((sorted-tree (codeql--sort-tree roots)))
+        (message "Tree is sorted (%d roots)." (length sorted-tree))
+        (with-current-buffer (get-buffer-create (format "* AST viewer: %s *" src-filename))
+          (codeql--render-tree sorted-tree)
+          (setq buffer-read-only t)
+          (save-excursion
+            (goto-char (point-min))
+            (org-mode)
+            (switch-to-buffer-other-window (current-buffer))))))))
+
+(defun codeql--render-node (node level)
+  (insert (concat (format "%s %s" level (codeql--ast-item-label node)) "\n"))
+  (cl-loop for node across (codeql--ast-item-children node)
+           do
+           (codeql--render-node node (concat level "*"))))
+
+(defun codeql--render-tree (tree)
+  (cl-loop for root across tree
+           do
+           (codeql--render-node root "*")))
+
+(defun codeql--sort-node (node)
+  ;; sort this node's children
+  (message "Sorting node children!")
+  (setf (codeql--ast-item-children node)
+        (sort (codeql--ast-item-children node)
+              (lambda (left right)
+                (< (codeql--ast-item-order left) (codeql--ast-item-order right)))))
+  ;; sort any children of this node's children
+  (when (> (length (codeql--ast-item-children node)) 0)
+    (seq-map #'codeql--sort-node (codeql--ast-item-children node))))
+
+(defun codeql--sort-tree (tree)
+  ;; sort all the children of the tree
+  (seq-map #'codeql--sort-node tree)
+  ;; sort all the roots of the tree and return that vector
+  (message "Sorting tree!")
+  (sort tree (lambda (left right)
+               (< (codeql--ast-item-order left) (codeql--ast-item-order right)))))
+
+
 
 (defun codeql-view-ast ()
   "Display the AST for the current source archive file."
