@@ -18,7 +18,8 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 - Org based rendering of path-problem, problem, and raw results
 - Remote query development + evaluation via TRAMP
 - Compatible with [github/gh-codeql](https://github.com/github/gh-codeql) for cli version management
-- CodeQL database source archive Xref support
+- Database source archive Xref support
+- AST Viewer
 
 ## Requirements
 
@@ -266,6 +267,12 @@ Alternatively, any invocation of the default `xref-find-references` or `xref-fin
 
 It is left as a matter of user preference whether to invoke `codeql-xref-backend` themselves, or to deal with a single layer of indirection and wait for one of the xref API to invoke it for them.
 
+## AST Viewer
+
+Just like the vscode extension, `emacs-codeql` lets you browse the AST of a database source archive file. Similar to the other results buffers, the AST is rendered as an org-mode tree. You can invoke the AST viewer with `M-x RET codeql-view-ast RET` for a database source archive file. 
+
+![screenshot](img/codeql-ast-viewer.png?raw=true "emacs-codeql")
+
 ## Commands
 
 All query server interaction for your query buffer routes via an intuitive `transient` interface. You can configure which keybinding is associated with starting this interface via the `codeql-transient-binding` variable. 
@@ -380,10 +387,11 @@ In the meantime, you should be able to just repeat whatever action was interrupt
 
 ## TODO
 
-- `emacs-codeql` does NOT yet provide xref and region annotation support for the database source code archive, however, this is underway and should be part of the first version.
+- `emacs-codeql` ~~does NOT yet provide xref and region annotation support for the database source code archive, however, this is underway and should be part of the first version.~~
 - `emacs-codeql` ~~does NOT yet provide database upgrade support, however, this is underway and should be part of the first version.~~ UPDATE: @adityasharad informs me that the current CodeQL engine will deal with database upgrades/downgrades automagically as long as you're not operating on very old databases
-- `emacs-codeql` does NOT yet provide an AST viewer, however, this is underway and should be a part of the first version.
+- `emacs-codeql` ~~does NOT yet provide an AST viewer, however, this is underway and should be a part of the first version.~~
 - `emacs-codeql` does NOT yet provide database creation support, use the codeql cli directly for this. I'll likely provide projectile commands for codeql database creation out of a given project root for various languages in an upcoming version.
+- `emacs-codeql` does NOT yet provide compressed database support, however this is underway and should be part of the first version.
 
 ## Acknowledgements
 
