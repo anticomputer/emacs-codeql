@@ -1630,22 +1630,43 @@ Our implementation simply returns the thing at point as a candidate."
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
 
 (defun codeql--process-defs (json src-filename src-root)
-  (unless codeql--definitions-cache
-    (setq codeql--definitions-cache (make-hash-table :test #'equal)))
   (puthash src-filename (list json src-root) codeql--definitions-cache)
   (message "Processed definitions for: %s" (file-name-nondirectory src-filename)))
 
 (defun codeql--process-refs (json src-filename src-root)
-  (unless codeql--references-cache
-    (setq codeql--references-cache (make-hash-table :test #'equal)))
   (puthash src-filename (list json src-root) codeql--references-cache)
   (message "Processed references for: %s" (file-name-nondirectory src-filename)))
 
-(defun codeql--print-ast (json src-filename src-root)
-  (unless codeql--ast-cache
-    (setq codeql--ast-cache (make-hash-table :test #'equal)))
+;; AST viewer
+
+(defun codeql--render-ast (json src-root src-filename)
+  (message "Rendering AST"))
+
+(defun codeql-view-ast ()
+  "Display the AST for the current source archive file."
+  (interactive)
+  (cl-multiple-value-bind (json src-root) (gethash (buffer-file-name) codeql--ast-cache)
+    (if json
+        ;; render the AST from cache
+        (codeql--render-ast json src-root (buffer-file-name))
+      ;; need to build an AST
+      (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
+               with filename = (buffer-file-name)
+               when (string-match source-root filename)
+               do
+               (message "Cooking up AST for %s, please hold." (file-name-nondirectory filename))
+               (with-current-buffer (gethash source-root codeql--active-source-roots-with-buffers)
+                 (let ((language (intern (format ":%s" codeql--active-database-language))))
+                   (codeql--run-templated-query language "printAst" filename)))
+               ;; exit loop on success
+               (cl-return)
+               ;; if we reach here, we did not find an active database query server to use
+               finally
+               (message "Did not recognize this file as being part of an active codeql database.")))))
+
+(defun codeql--process-ast (json src-filename src-root)
   (puthash src-filename (list json src-root) codeql--ast-cache)
-  (message "Processed AST for: %s" (file-name-nondirectory src-filename)))
+  (codeql--render-ast json src-root src-filename))
 
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id &optional src-filename src-root)
@@ -1701,7 +1722,7 @@ Our implementation simply returns the thing at point as a candidate."
                   ((string-match "/localReferences.ql$" query-path)
                    (codeql--process-refs json src-filename src-root))
                   ((string-match "/printAst.ql$" query-path)
-                   (codeql--print-ast json src-filename src-root))))))
+                   (codeql--process-ast json src-filename src-root))))))
 
        ;; SARIF parsing
        ;;
