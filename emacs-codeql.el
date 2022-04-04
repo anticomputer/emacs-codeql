@@ -1473,6 +1473,7 @@ This applies to both normal evaluation and quick evaluation.")
                    (lambda (identifier)
                      (interactive (list (codeql--xref-thing-at-point)))
                      (cl-letf (((symbol-value 'xref-backend-functions) (list (lambda () 'codeql-ast))))
+                       ;; for AST we generally want a side by side
                        (xref-find-definitions identifier))))
     (local-set-key (kbd "M-.")
                    (lambda (identifier)
@@ -1480,6 +1481,7 @@ This applies to both normal evaluation and quick evaluation.")
                      ;; skip the completion crud, since lookups are point/location based
                      (interactive (list (codeql--xref-thing-at-point)))
                      (cl-letf (((symbol-value 'xref-backend-functions) '(codeql-xref-backend)))
+                       ;; for actual definitions we want to follow
                        (xref-find-definitions identifier))))
     (local-set-key (kbd "M-?")
                    (lambda (identifier)
@@ -1539,40 +1541,44 @@ a codeql database source archive."
 ;; implement a special backend definition just for AST definitions
 (cl-defmethod xref-backend-definitions ((_backend (eql codeql-ast)) symbol)
   "Show any AST definitions available for the thing at point."
-  (when-let ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
-    (let ((candidates
-           (cl-loop for ast-def in (hash-table-keys ast-definitions)
-                    for ast-buffer = (gethash ast-def ast-definitions)
-                    for ast-def-seq = (split-string ast-def ":")
-                    for src-line = (string-to-number (seq-elt ast-def-seq 0))
-                    for src-start-column = (string-to-number (seq-elt ast-def-seq 1))
-                    for src-end-column = (string-to-number (seq-elt ast-def-seq 2))
-                    for ast-line = (string-to-number (seq-elt ast-def-seq 3))
-                    for point-line = (line-number-at-pos)
-                    for point-column = (codeql-lsp-abiding-column)
-                    when (and (buffer-live-p ast-buffer)
-                              (eql point-line src-line)
-                              (>= point-column src-start-column)
-                              (<= point-column src-end-column))
-                    ;; collect candidates, car is diff between point-column and src-start-column
-                    ;; the smallest diff is the closest match from point
-                    collect
-                    (list (- point-column src-start-column) ast-buffer ast-line))))
-      ;; sort the candidates by diff and return the closest match as an xref
-      (let ((closest-match (car (sort candidates (lambda (a b) (< (car a) (car b)))))))
-        (cl-multiple-value-bind (diff ast-buffer ast-line) closest-match
-          ;; append result to the normal definitions
-          (when (and ast-buffer (buffer-live-p ast-buffer))
-            (list
-             (xref-make "[AST] show thing-at-point in AST buffer."
-                        (xref-make-buffer-location
-                         ast-buffer
-                         (save-excursion
-                           (with-current-buffer ast-buffer
-                             (goto-line ast-line)
-                             (move-end-of-line nil)
-                             (pulse-momentary-highlight-one-line (point))
-                             (point))))))))))))
+  (if-let ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
+      (let ((candidates
+             (cl-loop for ast-def in (hash-table-keys ast-definitions)
+                      for ast-buffer = (gethash ast-def ast-definitions)
+                      for ast-def-seq = (split-string ast-def ":")
+                      for src-line = (string-to-number (seq-elt ast-def-seq 0))
+                      for src-start-column = (string-to-number (seq-elt ast-def-seq 1))
+                      for src-end-column = (string-to-number (seq-elt ast-def-seq 2))
+                      for ast-line = (string-to-number (seq-elt ast-def-seq 3))
+                      for point-line = (line-number-at-pos)
+                      for point-column = (codeql-lsp-abiding-column)
+                      when (and (buffer-live-p ast-buffer)
+                                (eql point-line src-line)
+                                (>= point-column src-start-column)
+                                (<= point-column src-end-column))
+                      ;; collect candidates, car is diff between point-column and src-start-column
+                      ;; the smallest diff is the closest match from point
+                      collect
+                      (list (- point-column src-start-column) ast-buffer ast-line))))
+        ;; sort the candidates by diff and return the closest match as an xref
+        (let ((closest-match (car (sort candidates (lambda (a b) (< (car a) (car b)))))))
+          (cl-multiple-value-bind (diff ast-buffer ast-line) closest-match
+            ;; append result to the normal definitions
+            (if (and ast-buffer (buffer-live-p ast-buffer))
+                (list
+                 (xref-make "[AST] show thing-at-point in AST buffer."
+                            (xref-make-buffer-location
+                             ast-buffer
+                             (save-excursion
+                               (with-current-buffer ast-buffer
+                                 (goto-line ast-line)
+                                 (move-end-of-line nil)
+                                 (pulse-momentary-highlight-one-line (point))
+                                 (point))))))
+              ;; buffer must have disappeared, yank it from the cache
+              (remhash (buffer-file-name) codeql--ast-backwards-definitions) nil
+              (error "No AST buffer available! Please M-x codeql-view-ast on the source buffer.")))))
+    (error "No AST buffer available yet! Please M-x codeql-view-ast on the source buffer.")))
 
 (cl-defmethod xref-backend-definitions ((_backend (eql codeql)) symbol)
   "Get known definitions for location at point."
