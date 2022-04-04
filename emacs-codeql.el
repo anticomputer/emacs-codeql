@@ -1713,7 +1713,6 @@ Our implementation simply returns the thing at point as a candidate."
 
                         ;; tag on a location result node for our org renderer to use
                         (when entity-url
-                          (message "XXX: %s" entity-url)
                           (setf (codeql--ast-item-result-node item)
                                 (codeql--result-node-create
                                  :label label
