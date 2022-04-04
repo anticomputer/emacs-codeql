@@ -1409,6 +1409,18 @@ This applies to both normal evaluation and quick evaluation.")
 
 ;; template queries for definitions, references, and AST
 
+(defvar codeql--templated-query-formats
+  (list :c           "cpp/ql/src/%s.ql"
+        :cpp         "cpp/ql/src/%s.ql"
+        :java        "java/ql/src/%s.ql"
+        :cs          "csharp/ql/src/%s.ql"
+        :javascript  "javascript/ql/src/%s.ql"
+        :python      "python/ql/src/%s.ql"
+        :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
+        :ruby        "ruby/ql/src/ide-contextual-queries/%s.ql"
+        :go          "ql/lib/%s.ql")
+  "A format list for finding templated queries by name")
+
 (defun codeql--templated-query-path (language query-name)
   "Return the relative path for a QUERY-NAME of type LANGUAGE."
   (when-let (fmt(plist-get codeql--templated-query-formats language))
@@ -1616,20 +1628,6 @@ Our implementation simply returns the thing at point as a candidate."
           (codeql-xref-backend))))))
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
-
-(defvar codeql--templated-query-formats
-  (list :c           "cpp/ql/src/%s.ql"
-        :cpp         "cpp/ql/src/%s.ql"
-        :java        "java/ql/src/%s.ql"
-        :cs          "csharp/ql/src/%s.ql"
-        :javascript  "javascript/ql/src/%s.ql"
-        :python      "python/ql/src/%s.ql"
-        :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
-        :ruby        "ruby/ql/src/ide-contextual-queries/%s.ql"
-        :go          "ql/lib/%s.ql")
-  "A format list for finding templated queries by name")
-
-;; note: filenames in these hash tables will include their tramp prefixes
 
 (defun codeql--process-defs (json src-filename src-root)
   (unless codeql--definitions-cache
