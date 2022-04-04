@@ -130,6 +130,9 @@
 (defvar codeql-transient-binding "C-c C-d"
   "The keybinding to start the emacs-codeql transient ui inside ql-tree-sitter-mode.")
 
+(defvar codeql-enable-xrefs t
+  "Enable CodeQL xref support for database source archives.")
+
 (defvar codeql-enable-remote-xrefs t
   "Enable CodeQL xref support for database source archives in remote sessions.")
 
@@ -1489,27 +1492,29 @@ functions, this will run and replace any existing xref bindings in
 the local buffer when appropriate, i.e. when the buffer is a file inside
 a codeql database source archive."
   (interactive)
-  (unless (and (file-remote-p (buffer-file-name)) (not codeql-enable-remote-xrefs))
-    (if (and (gethash (buffer-file-name) codeql--references-cache)
-             (gethash (buffer-file-name) codeql--definitions-cache))
-        (progn
-          (codeql--set-local-xref-bindings)
-          'codeql)
-      ;; see if this file SHOULD have codeql refs and defs and the local bindings
-      ;; XXX: this is not very performant, make this a faster lookup
-      (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-               with filename = (buffer-file-name)
-               when (string-match source-root filename)
-               do
-               ;; hail to the guardians of the watch towers of the east
-               (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory filename))
-               (with-current-buffer (gethash source-root codeql--active-source-roots-with-buffers)
-                 (let ((language (intern (format ":%s" codeql--active-database-language))))
-                   (codeql--run-templated-query language "localDefinitions" filename)
-                   (codeql--run-templated-query language "localReferences" filename)))
-               ;; we want our bindings available
-               (codeql--set-local-xref-bindings)
-               (cl-return 'codeql)))))
+  (when codeql-enable-xrefs
+    (unless (and (file-remote-p (buffer-file-name))
+                 (not codeql-enable-remote-xrefs))
+      (if (and (gethash (buffer-file-name) codeql--references-cache)
+               (gethash (buffer-file-name) codeql--definitions-cache))
+          (progn
+            (codeql--set-local-xref-bindings)
+            'codeql)
+        ;; see if this file SHOULD have codeql refs and defs and the local bindings
+        ;; XXX: this is not very performant, make this a faster lookup
+        (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
+                 with filename = (buffer-file-name)
+                 when (string-match source-root filename)
+                 do
+                 ;; hail to the guardians of the watch towers of the east
+                 (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory filename))
+                 (with-current-buffer (gethash source-root codeql--active-source-roots-with-buffers)
+                   (let ((language (intern (format ":%s" codeql--active-database-language))))
+                     (codeql--run-templated-query language "localDefinitions" filename)
+                     (codeql--run-templated-query language "localReferences" filename)))
+                 ;; we want our bindings available
+                 (codeql--set-local-xref-bindings)
+                 (cl-return 'codeql))))))
 
 (cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
   "Return the thing at point."
