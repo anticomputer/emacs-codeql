@@ -267,9 +267,11 @@ Alternatively, any invocation of the default `xref-find-references` or `xref-fin
 
 It is left as a matter of user preference whether to invoke `codeql-xref-backend` themselves, or to deal with a single layer of indirection and wait for one of the xref API to invoke it for them.
 
-## Abstract Syntax Tree Viewer support
+## AST Viewer
 
-Just like the vscode extension, `emacs-codeql` lets you browse the AST of a database source archive file. Similar to the other results buffers, the AST is rendered as an org-mode tree. You can invoke the AST viewer with `M-x RET codeql-view-ast RET`. 
+Just like the vscode extension, `emacs-codeql` lets you browse the AST of a database source archive file. Similar to the other results buffers, the AST is rendered as an org-mode tree. You can invoke the AST viewer with `M-x RET codeql-view-ast RET` for a database source archive file. 
+
+![screenshot](img/codeql-ast-viewer.png?raw=true "emacs-codeql")
 
 ## Commands
 
