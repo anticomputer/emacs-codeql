@@ -1713,6 +1713,7 @@ Our implementation simply returns the thing at point as a candidate."
 
                         ;; tag on a location result node for our org renderer to use
                         (when entity-url
+                          (message "XXX: %s" entity-url)
                           (setf (codeql--ast-item-result-node item)
                                 (codeql--result-node-create
                                  :label label
@@ -1779,20 +1780,33 @@ Our implementation simply returns the thing at point as a candidate."
       (switch-to-buffer-other-window (current-buffer)))))
 
 (defun codeql--render-node (node level &optional buffer-context)
-  (insert (concat
-           (format "%s %s" level
-                   (if-let ((result-node (and buffer-context (codeql--ast-item-result-node node))))
-                       ;; if we have a buffer-context, use that to resolve org links
-                       (save-excursion
-                         (with-current-buffer buffer-context
-                           (format "%s Line %s"
-                                   (codeql--result-node-to-org result-node nil "〚" "〛")
-                                   (codeql--result-node-line result-node))))
-                     ;; if not, just return a plain text heading
-                     (codeql--ast-item-label node))) "\n"))
+  (insert
+   (concat
+    (format "%s %s" level
+            (if-let* ((result-node
+                       ;; if these things hold, we want to resolve the org link
+                       (and buffer-context
+                            (codeql--ast-item-result-node node)))
+                      ;; line == 0 means no location available
+                      (line (and (> (codeql--result-node-line result-node) 0)
+                                 (codeql--result-node-line result-node))))
+                ;; go into the active query buffer context and resolve from database
+                (save-excursion
+                  (with-current-buffer buffer-context
+                    (format "%s %s%s"
+                            (codeql--ast-item-label node)
+                            (codeql--result-node-to-org
+                             result-node
+                             "⧉"
+                             "〚" "〛")
+                            ;; only add Line stamp to roots
+                            (if (codeql--ast-item-parent node) "" (format " Line %s" line)))))
+              ;; if not, just return a plain text heading
+              (codeql--ast-item-label node))) "\n"))
+  ;; hail to the guardians of the watch towers of the south.
   (cl-loop for node across (codeql--ast-item-children node)
            do
-           (codeql--render-node node (concat level "*"))))
+           (codeql--render-node node (concat level "*") buffer-context)))
 
 (defun codeql--render-tree (tree &optional buffer-context)
   (cl-loop for root across tree
