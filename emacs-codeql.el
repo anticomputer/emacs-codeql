@@ -1456,10 +1456,7 @@ This applies to both normal evaluation and quick evaluation.")
 (defvar-local codeql--ast-line-to-src-regions (make-hash-table :test #'equal))
 (defvar-local codeql--src-line-to-ast-regions (make-hash-table :test #'equal))
 
-;; these come from eglot, all original licensing and copyright applies
-
-(defun codeql--eglot-current-column () (- (point) (point-at-bol)))
-
+;; eglot code: https://github.com/joaotavora/eglot/blob/master/LICENSE
 
 ;; note: this isn't the same as codeql-lsp-abiding column!
 (defun codeql--eglot-lsp-abiding-column (&optional lbp)
@@ -1509,6 +1506,7 @@ If optional MARKER, return a marker instead"
           (codeql--eglot-move-to-lsp-abiding-column col)))
       (if marker (copy-marker (point-marker)) (point)))))
 
+;; end of: https://github.com/joaotavora/eglot/blob/master/LICENSE
 
 (defun codeql--ast-line-candidates-for-point (ast-definitions)
   "Return a list of potential AST thing matches for point in source buffer."
