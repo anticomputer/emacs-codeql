@@ -1417,7 +1417,7 @@ This applies to both normal evaluation and quick evaluation.")
   ;; do a dance to normalize back to the archive root relative path for this filename
   (format "/%s" (cadr (split-string filename (format "%s/*" codeql--database-source-archive-root)))))
 
-(defun codeql--run-templated-query (language query-name filename)
+(defun codeql--run-templated-query (language query-name src-filename src-buffer)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert codeql--active-database t)
 
@@ -1432,8 +1432,8 @@ This applies to both normal evaluation and quick evaluation.")
                       (:values
                        (:tuples
                         [(:stringValue
-                          ,(codeql--archive-path-from-org-filename (codeql--tramp-unwrap filename)))])))))
-               (codeql--query-server-run-query-from-path full-path nil template-values filename))
+                          ,(codeql--archive-path-from-org-filename (codeql--tramp-unwrap src-filename)))])))))
+               (codeql--query-server-run-query-from-path full-path nil template-values src-filename src-buffer))
              ;; respect search precedence and only return from first find
              (cl-return)
              ;; if we did not return, that means we weren't able to find the thing.
@@ -1444,6 +1444,85 @@ This applies to both normal evaluation and quick evaluation.")
   (let ((prefix (format "^%s/*" codeql--database-source-archive-root)))
     (when (string-match prefix (codeql--tramp-unwrap path))
       t)))
+
+;; mutual highlighting at point for src/ast buffers
+
+(defvar codeql--ast-to-src-buffer (make-hash-table :test #'equal))
+(defvar codeql--src-to-ast-buffer (make-hash-table :test #'equal))
+
+(defvar-local codeql--ast-last-point nil)
+(defvar-local codeql--src-last-point nil)
+
+(defvar-local codeql--ast-line-to-src-regions (make-hash-table :test #'equal))
+(defvar-local codeql--src-line-to-ast-regions (make-hash-table :test #'equal))
+
+(defun codeql--src-point-to-ast-region-highlight (ast-buffer)
+  "Return the closest matching AST match available for the thing at point in src buffer."
+  (when (buffer-live-p ast-buffer)
+    ;; XXX: move this to a more performant data structure in terms of lookups
+    (when-let* ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions))
+                (candidates
+                 (cl-loop for ast-def in (hash-table-keys ast-definitions)
+                          for ast-buffer = (gethash ast-def ast-definitions)
+                          for ast-def-seq = (split-string ast-def ":")
+                          for src-line = (string-to-number (seq-elt ast-def-seq 0))
+                          for src-start-column = (string-to-number (seq-elt ast-def-seq 1))
+                          for src-end-column = (string-to-number (seq-elt ast-def-seq 2))
+                          for ast-line = (string-to-number (seq-elt ast-def-seq 3))
+                          for point-line = (line-number-at-pos)
+                          for point-column = (codeql-lsp-abiding-column)
+                          when (and (buffer-live-p ast-buffer)
+                                    (eql point-line src-line)
+                                    (>= point-column src-start-column)
+                                    (<= point-column src-end-column))
+                          ;; collect candidates, car is diff between point-column and src-start-column
+                          ;; the smallest diff is the closest match from point
+                          collect
+                          (list (- point-column src-start-column) ast-buffer ast-line))))
+      (let ((closest-match (car (sort candidates (lambda (a b) (< (car a) (car b)))))))
+        ;; we already have ast-buffer available here, so don't need the xref defs copy
+        (cl-multiple-value-bind (diff _ ast-line) closest-match
+          ;; check it's still alive just to be sure
+          (when (and (buffer-live-p ast-buffer)
+                     ;; only do things if ast-buffer is visible and/or focused
+                     (or (eq ast-buffer (window-buffer (selected-window)))
+                         (get-buffer-window ast-buffer)))
+            (with-current-buffer ast-buffer
+              (cond
+               ;; we're the focused window for some inexplicable reason
+               ((eq ast-buffer (window-buffer (selected-window)))
+                (goto-line ast-line)
+                (move-end-of-line nil)
+                (recenter))
+               ;; we're an unfocused window but visible as expected
+               ((get-buffer-window ast-buffer)
+                (with-selected-window (get-buffer-window ast-buffer)
+                  (goto-line ast-line)
+                  (move-end-of-line nil)
+                  (recenter))))
+              (pulse-momentary-highlight-one-line (point)))))))))
+
+(defun codeql--ast-point-to-src-region (src-buffer))
+
+;; post-command hooks that run locally in ast/src buffers
+(defun codeql--sync-src-to-ast-overlay ()
+  (interactive)
+  (let ((ast-buffer (gethash (current-buffer) codeql--src-to-ast-buffer)))
+    (when (buffer-live-p ast-buffer)
+      (unless (= (point) codeql--src-last-point)
+        (setq codeql--src-last-point (point))
+        ;; do a thing
+        (codeql--src-point-to-ast-region-highlight ast-buffer)))))
+
+(defun codeql--sync-ast-to-src-overlay ()
+  (message "XXX: ast-to-src!")
+  (let ((src-buffer (gethash (current-buffer) codeql--ast-to-src-buffer)))
+    (when (buffer-live-p src-buffer)
+      (message "Found an active src buffer for ast!")
+      (unless (= (point) codeql--ast-last-point)
+        (setq codeql--ast-last-point (point))
+        (message "GOTTA DO A THING IN AST")
+        ))))
 
 ;; xref backend for our global ref/def caches
 
@@ -1482,6 +1561,9 @@ This applies to both normal evaluation and quick evaluation.")
                      (cl-letf (((symbol-value 'xref-backend-functions) '(codeql-xref-backend)))
                        (xref-find-references identifier))))
     (local-set-key (kbd "M-,") #'xref-pop-marker-stack)
+    ;; add a local post command hook so we can sync to ast region highlights
+    (setq codeql--src-last-point (point))
+    (add-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay 99 t)
     ;; source archive files are for browsing only!
     (setq buffer-read-only t)
     (message "Activated CodeQL source archive xref bindings in %s" (file-name-nondirectory (buffer-file-name)))
@@ -1511,15 +1593,16 @@ a codeql database source archive."
         ;; see if this file SHOULD have codeql refs and defs and the local bindings
         ;; XXX: this is not very performant, make this a faster lookup
         (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-                 with filename = (buffer-file-name)
-                 when (string-match source-root filename)
+                 with src-filename = (buffer-file-name)
+                 with src-buffer = (current-buffer)
+                 when (string-match source-root src-filename)
                  do
                  ;; hail to the guardians of the watch towers of the east
-                 (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory filename))
+                 (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory src-filename))
                  (with-current-buffer (gethash source-root codeql--active-source-roots-with-buffers)
                    (let ((language (intern (format ":%s" codeql--active-database-language))))
-                     (codeql--run-templated-query language "localDefinitions" filename)
-                     (codeql--run-templated-query language "localReferences" filename)))
+                     (codeql--run-templated-query language "localDefinitions" src-filename src-buffer)
+                     (codeql--run-templated-query language "localReferences" src-filename src-buffer)))
                  ;; we want our bindings available
                  (codeql--set-local-xref-bindings)
                  (cl-return 'codeql))))))
@@ -1667,11 +1750,11 @@ Our implementation simply returns the thing at point as a candidate."
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
 
-(defun codeql--process-defs (json src-filename src-root)
+(defun codeql--process-defs (json src-filename src-root src-buffer)
   (puthash src-filename (list json src-root) codeql--definitions-cache)
   (message "Processed definitions for: %s" (file-name-nondirectory src-filename)))
 
-(defun codeql--process-refs (json src-filename src-root)
+(defun codeql--process-refs (json src-filename src-root src-buffer)
   (puthash src-filename (list json src-root) codeql--references-cache)
   (message "Processed references for: %s" (file-name-nondirectory src-filename)))
 
@@ -1695,7 +1778,7 @@ Our implementation simply returns the thing at point as a candidate."
            do
            (cl-return t)))
 
-(defun codeql--render-ast (json src-root src-filename)
+(defun codeql--render-ast (json src-root src-filename src-buffer)
   (message "Rendering AST")
   ;; oh boy.
   (let ((id-to-item (make-hash-table :test #'equal))
@@ -1793,7 +1876,7 @@ Our implementation simply returns the thing at point as a candidate."
       ;; round 4: ding ding ding,  order and render
       (let ((sorted-tree (codeql--sort-tree roots)))
         (message "Tree is sorted (%d roots) ... rendering." (length sorted-tree))
-        ;; render with buffer context
+        ;; render with buffer context ...
         (cl-loop for active-source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
                  with filename = (codeql--tramp-wrap (format "%s%s" src-root src-filename))
                  when (string-match active-source-root filename)
@@ -1801,25 +1884,35 @@ Our implementation simply returns the thing at point as a candidate."
                  (message "Active buffer context available to render AST for %s" filename)
                  ;; hail to the guardians of the watch towers of the north.
                  (let ((buffer-context (gethash active-source-root codeql--active-source-roots-with-buffers)))
-                   (codeql--ast-to-org sorted-tree src-filename buffer-context))
+                   (codeql--ast-to-org sorted-tree src-filename src-buffer buffer-context))
                  ;; donezo.
                  (cl-return)
                  ;; fall back to plaintext rendering
                  finally
                  (message "No active buffer context available to render AST with, going to plaintext.")
-                 (codeql--ast-to-org sorted-tree src-filename))))))
+                 (codeql--ast-to-org sorted-tree src-filename src-buffer))))))
 
-(defun codeql--ast-to-org (sorted-tree src-filename &optional buffer-context)
-  (with-current-buffer (get-buffer-create (format "* AST viewer: %s *" src-filename))
-    (setq buffer-read-only nil)
-    (erase-buffer)
-    (insert (format "#+CODEQL_AST_VIEWER: %s\n\n" (file-name-nondirectory src-filename)))
-    (codeql--render-tree sorted-tree buffer-context)
-    (goto-char (point-min))
-    (setq buffer-read-only t)
-    (save-excursion
-      (org-mode)
-      (switch-to-buffer-other-window (current-buffer)))))
+(defun codeql--ast-to-org (sorted-tree src-filename src-buffer &optional buffer-context)
+  ;; src-filename is (buffer-filename) for the src buffer ... XXX: check with TRAMP
+  (let ((ast-buffer (get-buffer-create (format "* AST viewer: %s *" src-filename))))
+    (message "XXX: %s -> %s" src-filename src-buffer)
+    (with-current-buffer ast-buffer
+      ;; link the src buffer and the ast buffer in mutual harmony if it's still around
+      (when (buffer-live-p src-buffer)
+        (puthash ast-buffer src-buffer codeql--ast-to-src-buffer)
+        (puthash src-buffer ast-buffer codeql--src-to-ast-buffer))
+      (setq buffer-read-only nil)
+      (erase-buffer)
+      (insert (format "#+CODEQL_AST_VIEWER: %s\n\n" (file-name-nondirectory src-filename)))
+      (codeql--render-tree sorted-tree buffer-context)
+      (goto-char (point-min))
+      (setq buffer-read-only t)
+      (save-excursion
+        (org-mode)
+        ;; add our highlighting sync
+        (setq codeql--ast-last-point (point))
+        (add-hook 'post-command-hook #'codeql--sync-ast-to-src-overlay 99 t)
+        (switch-to-buffer-other-window (current-buffer))))))
 
 (defun codeql--render-node (node level &optional buffer-context)
   (insert
@@ -1916,29 +2009,32 @@ Our implementation simply returns the thing at point as a candidate."
   (cl-multiple-value-bind (json src-root) (gethash (buffer-file-name) codeql--ast-cache)
     (if json
         ;; render the AST from cache
-        (codeql--render-ast json src-root (buffer-file-name))
+        (codeql--render-ast json src-root (buffer-file-name) (current-buffer))
       ;; need to build an AST
       (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-               with filename = (buffer-file-name)
-               when (string-match source-root filename)
+               with src-filename = (buffer-file-name)
+               with src-buffer = (current-buffer)
+               when (string-match source-root src-filename)
                do
-               (message "Cooking up AST for %s, please hold." (file-name-nondirectory filename))
-               (with-current-buffer (gethash source-root codeql--active-source-roots-with-buffers)
-                 (let ((language (intern (format ":%s" codeql--active-database-language))))
-                   (codeql--run-templated-query language "printAst" filename)))
+               (message "Cooking up AST for %s, please hold." (file-name-nondirectory src-filename))
+               (let ((query-buffer
+                      (gethash source-root codeql--active-source-roots-with-buffers)))
+                 (with-current-buffer query-buffer
+                   (let ((language (intern (format ":%s" codeql--active-database-language))))
+                     (codeql--run-templated-query language "printAst" src-filename src-buffer))))
                ;; exit loop on success
                (cl-return)
                ;; if we reach here, we did not find an active database query server to use
                finally
                (message "Did not recognize this file as being part of an active codeql database.")))))
 
-(defun codeql--process-ast (json src-filename src-root)
+(defun codeql--process-ast (json src-filename src-root src-buffer)
   ;; only allow this to be called as part of a templated flow
   (puthash src-filename (list json src-root) codeql--ast-cache)
-  (codeql--render-ast json src-root src-filename))
+  (codeql--render-ast json src-root src-filename src-buffer))
 
 ;; abandon hope, all ye who enter here ...
-(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id &optional src-filename src-root)
+(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id &optional src-filename src-root src-buffer)
   "Parse the results at BQRS-PATH and render them accordingly to the user."
 
   (message "Loading bqrs from %s (name: %s kind: %s id: %s)"
@@ -1990,11 +2086,11 @@ Our implementation simply returns the thing at point as a candidate."
                           :object-type 'alist)))
               (when json
                 (cond ((string-match "/localDefinitions.ql$" query-path)
-                       (codeql--process-defs json src-filename src-root))
+                       (codeql--process-defs json src-filename src-root src-buffer))
                       ((string-match "/localReferences.ql$" query-path)
-                       (codeql--process-refs json src-filename src-root))
+                       (codeql--process-refs json src-filename src-root src-buffer))
                       ((string-match "/printAst.ql$" query-path)
-                       (codeql--process-ast json src-filename src-root)))))
+                       (codeql--process-ast json src-filename src-root src-buffer)))))
           (message "Can't process templated query without src-filename and src-root.")))
 
        ;; SARIF parsing
@@ -2157,7 +2253,7 @@ Our implementation simply returns the thing at point as a candidate."
                 (let ((rendered (codeql--org-render-raw-query-results org-data footer)))
                   (with-temp-file (format "%s.org" bqrs-path) (insert rendered))))))))))))
 
-(defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval &optional template-values src-filename)
+(defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval &optional template-values src-filename src-buffer)
   "Request a query evaluation from the query server."
   (with-current-buffer buffer-context
     (let ((run-query-params
@@ -2223,7 +2319,7 @@ Our implementation simply returns the thing at point as a candidate."
                                           :id ,id)
                             codeql--completed-query-history)))
                        ;; display results
-                       (codeql-load-bqrs bqrs-path query-path db-path name kind id src-filename codeql--database-source-archive-root))))
+                       (codeql-load-bqrs bqrs-path query-path db-path name kind id src-filename codeql--database-source-archive-root src-buffer))))
                (message "No query results in %s!" bqrs-path)))))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
@@ -2231,7 +2327,7 @@ Our implementation simply returns the thing at point as a candidate."
        :deferred :evaluation/runQueries))))
 
 ;; XXX: too many args, move all of those to passing a struct around instead
-(defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval &optional template-values src-filename)
+(defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval &optional template-values src-filename src-buffer)
   "Request query compilation from the query server."
 
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -2310,13 +2406,14 @@ Our implementation simply returns the thing at point as a candidate."
                                                  db-path
                                                  quick-eval
                                                  template-values
-                                                 src-filename)))))
+                                                 src-filename
+                                                 src-buffer)))))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
        :deferred :compilation/compileQuery))))
 
-(defun codeql--query-server-run-query-from-path (query-path quick-eval &optional template-values src-filename)
+(defun codeql--query-server-run-query-from-path (query-path quick-eval &optional template-values src-filename src-buffer)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert codeql--active-database t)
   (cl-assert (codeql--resolve-query-paths query-path) t)
@@ -2343,7 +2440,8 @@ Our implementation simply returns the thing at point as a candidate."
                                                   db-scheme
                                                   quick-eval
                                                   template-values
-                                                  src-filename)))
+                                                  src-filename
+                                                  src-buffer)))
 
 (defun codeql-query-server-run-query ()
   "Run a query or quick eval a query region.
