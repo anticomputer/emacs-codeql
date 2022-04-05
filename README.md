@@ -83,34 +83,32 @@ Alternatively, you can clone this repository and place it into your emacs `load-
 (setq codeql-search-paths '("./"))
 ```
 
-### Configuring the CodeQL CLI
+### Getting Started: the recommended way
 
-There's multiple ways you can bootstrap the codeql cli tool chain for query development. We'll outline two of the more popular strategies here.
+The quickest way into painfree CodeQL development is to use the CodeQL starter workspace and the gh cli extension to manage your toolchain dependencies. To get started:
 
-#### 1: Use a bootstrap script to setup a codeql cli and library repo siblings
+1. Run [the starter workspace init script](https://github.com/anticomputer/emacs-codeql/blob/main/tools/init-starter-workspace.sh). This will setup a full CodeQL development environment in `~/codeql-home/codeql-starter-workspace` and also configure your search paths in `~/.config/codeql/config`.
 
-For convenience, `emacs-codeql` provides a [cli bootstrap script](https://raw.githubusercontent.com/anticomputer/emacs-codeql/main/tools/bootstrap-codeql-cli.sh) which will bootstrap the codeql cli in a given current working directory. You can run this script, paste its resulting search path configuration into your `emacs-codeql` config, and you're off to the races.
+2. Install the [GitHub CLI](https://cli.github.com/) via your package manager of choice.
+
+3. Install the [GitHub CLI CodeQL extension](https://github.com/github/gh-codeql) via `gh extensions install github/gh-codeql`.
+
+4. Confirm you can resolve qlpacks using `gh codeql resolve qlpacks`, on first run this will also download the CodeQL CLI on your behalf.
+
+5. [Download or create a database](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#obtaining-databases-from-lgtm-com) to query.
+
+6. Open a `~/codeql-home/codeql-starter-workspace/codeql-custom-queries-*/example.ql` file, and start iterating on your query using `emacs-codeql`.
+
+
+### Getting Started: the custom way
+
+If you rather configure your codeql cli manually, for convenience, `emacs-codeql` provides a [cli bootstrap script](https://raw.githubusercontent.com/anticomputer/emacs-codeql/main/tools/bootstrap-codeql-cli.sh) which will bootstrap the codeql cli in a given current working directory. You can run this script, paste its resulting search path configuration into your `emacs-codeql` config, and you're off to the races.
 
 If you bootstrap into `~/codeql-home`, then `~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go` is a clone of https://github.com/github/codeql-go
 
 `emacs-codeql` expects the codeql cli to exist in your `PATH`. Follow the standard [codeql cli setup instructions](https://codeql.github.com/docs/codeql-cli/getting-started-with-the-codeql-cli/) to get the cli bootstrapped and add its location to your executable search `PATH`.
 
-#### 2: Using the GitHub CLI codeql extension
-
-If you use the gh cli, then you can also use the `github/gh-codeql` cli extension to initialize and configure your codeql cli:
-
-TL;DR:
-
-```shell
-# clone codeql and codeql repos and configure codeql search paths
-echo "--search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo" >> ~/.config/codeql/config
-
-# install codeql extension
-gh extension install github/gh-codeql
-
-# verify search paths are configured correctly
-gh codeql resolve qlpacks
-```
+If you use the gh cli, then you can also use the `github/gh-codeql` cli extension to initialize and configure your codeql cli.
 
 You'll still need to clone the `github/codeql` and `github/codeql-go` repositories as with the bootstrap script and make them available in the search path of the codeql cli.
 
@@ -120,16 +118,11 @@ If unavailable, `emacs-codeql` will fall back to its normal executable path expe
 
 #### Custom search paths
 
-We recommend you use [`.config/codeql/config`](https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/) for your codeql cli search path configurations. This allows for more straightforward standard search path deconfliction between local and remote query contexts.
+We recommend you use [`.config/codeql/config`](https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/) for your codeql cli search path configurations. This allows for more straightforward standard search path deconfliction between local and remote query contexts. 
 
-Ensure your codeql cli configuration contains your search paths in `.config/codeql/config` on any local or remote system that you intend to use the codeql cli on via `emacs-codeql`.
+If you used the provided workspace init script it has already configured the paths for you.
 
-```
-λ ~ › cat ~/.config/codeql/config 
---search-path /home/codespace/codeql-home/codeql-repo:/home/codespace/codeql-home/codeql-go-repo
-λ ~ › 
-```
-In this example `~/codeql-home/codeql-repo` is a clone of https://github.com/github/codeql and `~/codeql-home/codeql-go-repo` is a clone of https://github.com/github/codeql-go
+It is important to ensure your codeql cli configuration contains the correct/desired search paths in `.config/codeql/config` on any local or remote system that you intend to use the codeql cli on via `emacs-codeql`.
 
 Use `codeql resolve qlpacks` to double check that you can resolve all the expected qlpacks available in the default repositories.
 
@@ -140,7 +133,7 @@ The `codeql-search-paths` variable in `emacs-codeql` exists purely to provide yo
 
 ### Optional: build custom tree-sitter QL artifacts
 
-If this package does not contain the required `tree-sitter-langs` artifacts for your system, you may also need to install the following to be able to build the required QL `tree-sitter-langs` support for your system.
+If this package does not contain the required `tree-sitter-langs` artifacts for your system, or you simply do not trust the binary artifacts I provided, you may also need to install the following to be able to build the required QL `tree-sitter-langs` support for your system.
 
 ```elisp
 (use-package tree-sitter
@@ -167,9 +160,9 @@ If this package does not contain the required `tree-sitter-langs` artifacts for 
   :ensure t)
 ```
 
-Follow my [tree-sitter-langs fork documentation](https://github.com/anticomputer/tree-sitter-langs-1) for instructions on how to build such an artifact.
+Follow the [tree-sitter-langs documentation](https://github.com/anticomputer/tree-sitter-langs-1) for detailed instructions on how to build such an artifact. 
 
-TL;DR: 
+In a nutshell:
 
 1. Install cask. 
 2. run `cask install` for my fork (`git clone --branch anticomputer-ql git@github.com:/anticomputer/tree-sitter-langs-1`) of `tree-sitter-langs` from its project root. 
@@ -180,7 +173,7 @@ NOTE:
 
 `tree-sitter` version <0.20 is required due to a breaking change in >= 0.20, I use 0.19.5.
 
-If you're on a Mac, you'll also need to set `EMACSDATA` and `EMACSLOADPATH` correctly, e.g:
+If you're on a Mac, you'll also need to set `EMACSDATA` and `EMACSLOADPATH` correctly, e.g when using MacPorts Emacs.app:
 
 ```
 EMACSDATA=/Applications/MacPorts/EmacsMac.app/Contents/Resources/etc EMACSLOADPATH=/Applications/MacPorts/EmacsMac.app/Contents/Resources/lisp cask install
@@ -191,15 +184,15 @@ After building the QL artifact(s) for the architectures and platforms you need t
 
 QL syntax highlighting and indentation should now work fine.
 
-## Usage
+## Using `emacs-codeql`
 
 NOTE: make sure that you enable the `projectile` configuration option if you intend to use LSP support via `eglot`, as `eglot` needs to send the project root as part of codeql langserver `workspaceFolders` initialization.
 
-### Quickstart Query projects
+### Query Development using the workspace
 
-The quickest way to get up and running with a working CodeQL development environment is through the [starter workspace](https://github.com/github/vscode-codeql-starter). For your convenience a `tools/init-starter-workspace.sh` bootstrap script is included with `emacs-codeql` that will clone and configure all the appropriate repositories. You can then start writing queries for the language of choice in any of the `codeql-custom-queries-*` directories.
+The quickest way to get up and running with a working CodeQL development environment is through the aforementioned [starter workspace](https://github.com/github/vscode-codeql-starter). For your convenience a `tools/init-starter-workspace.sh` bootstrap script is included with `emacs-codeql` that will clone and configure all the appropriate repositories. You can then start writing queries for the language of choice in any of the `codeql-custom-queries-*` directories.
 
-#### Custom Query Projects
+### Query Development without using the workspace
 
 If you already have a bootstrapped codeql cli configuration and prefer not to use the starter workspace, you can create a project root containing a `qlpack.yml` QL pack definition and then create query files inside this project.
 
@@ -215,7 +208,7 @@ libraryPathDependencies: codeql/javascript-all
 
 See [CodeQL packs documentation](https://codeql.github.com/docs/codeql-cli/about-ql-packs/) for additional information.
 
-### Query files
+### Writing and Running Queries
 
 Edit a `.ql` or `.qll` file inside a `qlpack.yml` project root (e.g. a `codeql-custom-queries-*` directory) and run `M-x codeql-transient-query-server-interact` to open the `emacs-codeql` transient. This transient is bound to the value of `codeql-transient-binding` on initialization, which may be customized by the user by setting `codeql-transient-binding` to a keybinding of their liking.
 
@@ -227,7 +220,7 @@ Edit a `.ql` or `.qll` file inside a `qlpack.yml` project root (e.g. a `codeql-c
 
 `emacs-codeql` also packages QL `tree-sitter` artifacts for Linux x64 and MacOS x64 systems, which may preclude the need to build your own artifacts. If your system is compatible with the existing artifacts, you are not required to install the custom forks of `tree-sitter`, `tree-sitter-langs` and `tree-sitter-indent` and can just use the existing MELPA versions.
 
-### Database selection
+#### Database selection
 
 You can register a database for your current project via `M-x codeql-transient-query-server-interact` and selecting `d` to register an active database. Ensure you have started a query server first by using `s` from the same menu. If a database is active in another query buffer, it will automatically be deregistered there and registered for your current buffer. If a database has been registered in the global emacs session before, you can fetch it more rapidly via selecting `k` for known database history.
 
@@ -237,13 +230,13 @@ Database selection is buffer-local per query file and you can run as many concur
 
 You can find existing databases for a ton of open source projects on [LGTM.com](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#obtaining-databases-from-lgtm-com), or you can [create your own](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#creating-codeql-databases) using the codeql cli. 
 
-### Run a query or eval predicates
+#### Run a query or quick evaluate query regions
 
 If there is an active region, `emacs-codeql` will attempt to quick-eval that region. Note that to quick-eval an entire predicate, you should mark the predicate name itself as opposed to the entire predicate definition. This follows the same semantics as quick-evaluation in the vscode extension.
 
 If there is no active region, `emacs-codeql` will attempt to run the full query by default.
 
-## Result rendering
+#### Result rendering
 
 Results are rendered through `org-mode` buffers, which allows you to save results as normal text files and even read them in other editors. This approach also allows you to turn a result buffer into a living audit document, take notes, and do all the things that `org-mode` allows you to do.
 
@@ -255,7 +248,7 @@ Results contain source code locations in the form of org links, which can be vis
 
 `emacs-codeql` will resolve file paths into the project snapshot source code archive included with the database archive. 
 
-## Database source archive Xref support
+### Database source archive Xref support
 
 `emacs-codeql` automatically retrieves references and definitions for database source archive files that are opened from a result buffer org link. It achieves this by registering a custom org-link handler for a `codeql:` link type which then performs a ridiculous elisp ritual to trick emacs into thinking it actually has xref support for these files specifically. 
 
@@ -271,7 +264,7 @@ Alternatively, any invocation of the default `xref-find-references` or `xref-fin
 
 It is left as a matter of user preference whether to invoke `codeql-xref-backend` themselves, or to deal with a single layer of indirection and wait for one of the xref API to invoke it for them.
 
-## AST Viewer
+### AST Viewer
 
 Just like the vscode extension, `emacs-codeql` lets you browse the AST of a database source archive file. Similar to the other results buffers, the AST is rendered as an org-mode tree. You can invoke the AST viewer with `M-x RET codeql-view-ast RET` for a database source archive file. 
 
@@ -279,7 +272,7 @@ Just like the vscode extension, `emacs-codeql` lets you browse the AST of a data
 
 There is AST xref support bound to `M->` in any database source file that also has an active AST viewer buffer open.
 
-## Commands
+### Commands
 
 All query server interaction for your query buffer routes via an intuitive `transient` interface. You can configure which keybinding is associated with starting this interface via the `codeql-transient-binding` variable. 
 
@@ -287,7 +280,7 @@ This interface is self-documenting and allows you to start/stop query servers, s
 
 Otherwise hidden features such as max path depths for path queries are unobtrusively surfaced to the user.
 
-## TRAMP support
+### TRAMP support
 
 `emacs-codeql` is fully TRAMP compatible, which means you can edit a query file over TRAMP and as long as `emacs-codeql` can find, or is told where to find, the codeql cli installation on the remote end, everything will work just as if you were working locally. Yes, this means you can develop codeql queries without any locally installed dependencies from your emacs. Science.
 
@@ -351,7 +344,7 @@ I use the following config to enable convenient GitHub Codespaces access from em
 
 With the completion function in place, you can just TAB to get a list of your available Codespaces when opening a `/ghcs:` prefixed file.
 
-## Language Server Protocol
+### Language Server Protocol
 
 `emacs-codeql` performs very well with `eglot`. Due to the codeql language server relying on `workspaceFolders` support, `eglot 20220326.2143` or newer is required from MELPA, which includes the basic project-root based `workspaceFolders` introduced in: https://github.com/joaotavora/eglot/commit/9eb9353fdc15c91a66ef8f4e53e18b22aa0870cd
 
@@ -361,7 +354,7 @@ It is HIGHLY recommended to enable both eglot and projectile configurations, as 
 
 `emacs-codeql` has not been tested in conjunction with `lsp-mode`.
 
-### LSP + TRAMP
+#### LSP over TRAMP
 
 While the recommended LSP client, `eglot`, does function over TRAMP, running LSP over TRAMP can be very quirky and laggy unless you're on the latest emacs and TRAMP versions. Slow server initialization can be blocking to the point of full freezes. When operating in a TRAMP context, `emacs-codeql` will ask you if you want to enable the LSP client, unless you reaaaally want it, I recommend disabling it for remote editing and query debugging.
 
