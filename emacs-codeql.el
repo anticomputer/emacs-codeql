@@ -122,6 +122,9 @@
 
 ;;; global user configuration options (XXX: move to defcustom)
 
+(defvar codeql-query-server-timeout 120
+  "Query server compile/run timeout in seconds.")
+
 (defvar codeql-transient-binding "C-c C-d"
   "The keybinding to start the emacs-codeql transient ui inside ql-tree-sitter-mode.")
 
@@ -464,6 +467,20 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 (defvar codeql--definitions-cache (make-hash-table :test #'equal))
 (defvar codeql--references-cache (make-hash-table :test #'equal))
 (defvar codeql--ast-cache (make-hash-table :test #'equal))
+
+(defvar codeql--ast-backwards-definitions (make-hash-table :test #'equal)
+  "A hash table of src-filename -> hash table { AST buffer line : source file location }.
+
+We use this to provide backwards references into the AST buffer from the source file.")
+
+(defun codeql-clear-refs-defs-ast-cache ()
+  "Clear global refs/defs/ast caches in case you need a clean slate."
+  (interactive)
+  (setq codeql--ast-backwards-definitions (make-hash-table :test #'equal))
+  (setq codeql--definitions-cache (make-hash-table :test #'equal))
+  (setq codeql--references-cache (make-hash-table :test #'equal))
+  (setq codeql--ast-cache (make-hash-table :test #'equal))
+  (message "Cleared refs/defs/ast caches."))
 
 (defvar codeql--active-source-roots-with-buffers nil
   "A hash table of currently active archive source roots and their query buffers.")
@@ -1804,11 +1821,6 @@ Our implementation simply returns the thing at point as a candidate."
       (org-mode)
       (switch-to-buffer-other-window (current-buffer)))))
 
-(defvar codeql--ast-backwards-definitions (make-hash-table :test #'equal)
-  "A hash table of src-filename -> hash table { AST buffer line : source file location }.
-
-We use this to provide backwards references into the AST buffer from the source file.")
-
 (defun codeql--render-node (node level &optional buffer-context)
   (insert
    (concat
@@ -2169,6 +2181,7 @@ We use this to provide backwards references into the AST buffer from the source 
       (jsonrpc-async-request
        (codeql--query-server-current-or-error)
        :evaluation/runQueries run-query-params
+       :timeout codeql-query-server-timeout
        :success-fn
        (lexical-let ((buffer-context buffer-context)
                      (query-info query-info)
@@ -2215,9 +2228,6 @@ We use this to provide backwards references into the AST buffer from the source 
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
-       :timeout-fn
-       (jsonrpc-lambda (&rest _)
-         (message ":evaluation/runQueries timed out."))
        :deferred :evaluation/runQueries))))
 
 ;; XXX: too many args, move all of those to passing a struct around instead
@@ -2271,6 +2281,7 @@ We use this to provide backwards references into the AST buffer from the source 
       (jsonrpc-async-request
        (codeql--query-server-current-or-error)
        :compilation/compileQuery compile-query-params
+       :timeout codeql-query-server-timeout
        :success-fn
        (lexical-let ((buffer-context buffer-context)
                      (bqrs-path bqrs-path)
@@ -2300,9 +2311,6 @@ We use this to provide backwards references into the AST buffer from the source 
                                                  quick-eval
                                                  template-values
                                                  src-filename)))))
-       :timeout-fn
-       (jsonrpc-lambda (&rest _)
-         (message ":compilation/compileQuery timed out."))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
