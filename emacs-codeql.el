@@ -465,6 +465,20 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 (defvar codeql--references-cache (make-hash-table :test #'equal))
 (defvar codeql--ast-cache (make-hash-table :test #'equal))
 
+(defvar codeql--ast-backwards-definitions (make-hash-table :test #'equal)
+  "A hash table of src-filename -> hash table { AST buffer line : source file location }.
+
+We use this to provide backwards references into the AST buffer from the source file.")
+
+(defun codeql-clear-refs-defs-ast-cache ()
+  "Clear global refs/defs/ast caches in case you need a clean slate."
+  (interactive)
+  (setq codeql--ast-backwards-definitions (make-hash-table :test #'equal))
+  (setq codeql--definitions-cache (make-hash-table :test #'equal))
+  (setq codeql--references-cache (make-hash-table :test #'equal))
+  (setq codeql--ast-cache (make-hash-table :test #'equal))
+  (message "Cleared refs/defs/ast caches."))
+
 (defvar codeql--active-source-roots-with-buffers nil
   "A hash table of currently active archive source roots and their query buffers.")
 
@@ -1803,11 +1817,6 @@ Our implementation simply returns the thing at point as a candidate."
     (save-excursion
       (org-mode)
       (switch-to-buffer-other-window (current-buffer)))))
-
-(defvar codeql--ast-backwards-definitions (make-hash-table :test #'equal)
-  "A hash table of src-filename -> hash table { AST buffer line : source file location }.
-
-We use this to provide backwards references into the AST buffer from the source file.")
 
 (defun codeql--render-node (node level &optional buffer-context)
   (insert
