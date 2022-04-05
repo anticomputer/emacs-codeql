@@ -2176,6 +2176,7 @@ Our implementation simply returns the thing at point as a candidate."
 
       (message "Running query ...")
       (jsonrpc-async-request
+       :timeout 60
        (codeql--query-server-current-or-error)
        :evaluation/runQueries run-query-params
        :success-fn
@@ -2224,9 +2225,6 @@ Our implementation simply returns the thing at point as a candidate."
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
-       :timeout-fn
-       (jsonrpc-lambda (&rest _)
-         (message ":evaluation/runQueries timed out."))
        :deferred :evaluation/runQueries))))
 
 ;; XXX: too many args, move all of those to passing a struct around instead
@@ -2278,6 +2276,7 @@ Our implementation simply returns the thing at point as a candidate."
 
       (message "Compiling query (%s) ..." (if quick-eval "quick-eval" "full-query"))
       (jsonrpc-async-request
+       :timeout 60
        (codeql--query-server-current-or-error)
        :compilation/compileQuery compile-query-params
        :success-fn
@@ -2309,9 +2308,6 @@ Our implementation simply returns the thing at point as a candidate."
                                                  quick-eval
                                                  template-values
                                                  src-filename)))))
-       :timeout-fn
-       (jsonrpc-lambda (&rest _)
-         (message ":compilation/compileQuery timed out."))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
          (message "Error %s: %s %s" code message _data))
