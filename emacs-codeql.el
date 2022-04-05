@@ -122,6 +122,9 @@
 
 ;;; global user configuration options (XXX: move to defcustom)
 
+(defvar codeql-query-server-timeout 120
+  "Query server compile/run timeout in seconds.")
+
 (defvar codeql-transient-binding "C-c C-d"
   "The keybinding to start the emacs-codeql transient ui inside ql-tree-sitter-mode.")
 
@@ -2176,9 +2179,9 @@ Our implementation simply returns the thing at point as a candidate."
 
       (message "Running query ...")
       (jsonrpc-async-request
-       :timeout 60
        (codeql--query-server-current-or-error)
        :evaluation/runQueries run-query-params
+       :timeout codeql-query-server-timeout
        :success-fn
        (lexical-let ((buffer-context buffer-context)
                      (query-info query-info)
@@ -2276,9 +2279,9 @@ Our implementation simply returns the thing at point as a candidate."
 
       (message "Compiling query (%s) ..." (if quick-eval "quick-eval" "full-query"))
       (jsonrpc-async-request
-       :timeout 60
        (codeql--query-server-current-or-error)
        :compilation/compileQuery compile-query-params
+       :timeout codeql-query-server-timeout
        :success-fn
        (lexical-let ((buffer-context buffer-context)
                      (bqrs-path bqrs-path)
