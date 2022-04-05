@@ -1385,12 +1385,12 @@ This applies to both normal evaluation and quick evaluation.")
             :url `(,(cons 'uri uri)
                    ,(cons 'startLine (json-pointer-get region "/startLine"))
                    ,(cons 'endLine (or (json-pointer-get region "/endLine")
-                                       (json-pointer-get region "startLine")))
+                                       (json-pointer-get region "/startLine")))
                    ,(cons 'startColumn (or (json-pointer-get region "/startColumn") 1))
                    ,(cons 'endColumn (json-pointer-get region "/endColumn"))
                    ;; throw these in here just in case they exist and we need them
                    ,(cons 'charOffset (json-pointer-get region "/charOffset"))
-                   ,(cons 'charLength (json-pointer-get region "charLength"))
+                   ,(cons 'charLength (json-pointer-get region "/charLength"))
                    ,(cons 'snippet (json-pointer-get region "/snippet"))))))
      node)))
 
@@ -1456,6 +1456,90 @@ This applies to both normal evaluation and quick evaluation.")
 (defvar-local codeql--ast-line-to-src-regions (make-hash-table :test #'equal))
 (defvar-local codeql--src-line-to-ast-regions (make-hash-table :test #'equal))
 
+;; these come from eglot, all original licensing and copyright applies
+
+(defun codeql--eglot-current-column () (- (point) (point-at-bol)))
+
+
+;; note: this isn't the same as codeql-lsp-abiding column!
+(defun codeql--eglot-lsp-abiding-column (&optional lbp)
+  "Calculate current COLUMN as defined by the LSP spec.
+LBP defaults to `line-beginning-position'."
+  (/   (- (length (encode-coding-region (or lbp (line-beginning-position))
+                                        ;; Fix github#860
+                                        (min (point) (point-max)) 'utf-16 t))
+          2)
+       2))
+
+(cl-defmacro codeql--eglot--widening (&rest body)
+  "Save excursion and restriction.  Widen.  Then run BODY." (declare (debug t))
+  `(save-excursion (save-restriction (widen) ,@body)))
+
+(defun codeql--eglot-move-to-lsp-abiding-column (column)
+  "Move to COLUMN abiding by the LSP spec."
+  (save-restriction
+    (cl-loop
+     with lbp = (line-beginning-position)
+     initially
+     (narrow-to-region lbp (line-end-position))
+     (move-to-column column)
+     for diff = (- column
+                   (codeql--eglot-lsp-abiding-column lbp))
+     until (zerop diff)
+     do (condition-case eob-err
+            (forward-char (/ (if (> diff 0) (1+ diff) (1- diff)) 2))
+          (end-of-buffer (cl-return eob-err))))))
+
+(defun codeql--eglot--lsp-position-to-point (pos-plist &optional marker)
+  "Convert LSP position POS-PLIST to Emacs point.
+If optional MARKER, return a marker instead"
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (forward-line (min most-positive-fixnum
+                         (plist-get pos-plist :line)))
+      (unless (eobp) ;; if line was excessive leave point at eob
+        (let ((tab-width 1)
+              (col (plist-get pos-plist :character)))
+          (unless (wholenump col)
+            (message "Caution: LSP server sent invalid character position %s. Using 0 instead."
+                     col)
+            (setq col 0))
+          (codeql--eglot-move-to-lsp-abiding-column col)))
+      (if marker (copy-marker (point-marker)) (point)))))
+
+
+(defun codeql--ast-line-candidates-for-point (ast-definitions)
+  "Return a list of potential AST thing matches for point in source buffer."
+  (cl-loop for ast-def in (hash-table-keys ast-definitions)
+           for ast-buffer = (gethash ast-def ast-definitions)
+           for ast-def-seq = (split-string ast-def ":")
+           for src-start-line = (string-to-number (seq-elt ast-def-seq 0))
+           for src-end-line = (string-to-number (seq-elt ast-def-seq 1))
+           for src-start-column = (string-to-number (seq-elt ast-def-seq 2))
+           for src-end-column = (string-to-number (seq-elt ast-def-seq 3))
+           for ast-line = (string-to-number (seq-elt ast-def-seq 4))
+           ;; codeql result positions are 1 based, eglot lsp calcs expect 0 based
+           for lsp-start-point = (codeql--eglot--lsp-position-to-point
+                                  `(:line ,(1- src-start-line) :character ,(1- src-start-column)))
+           for lsp-end-point = (codeql--eglot--lsp-position-to-point
+                                `(:line ,(1- src-end-line) :character ,(1- src-end-column)))
+           for debug = (when (and nil (buffer-live-p ast-buffer)
+                                  (>= (point) lsp-start-point)
+                                  (<= (point) lsp-end-point))
+                         (message "Considering: point: %s lsp-start-point: %s lsp-end-point: %s ast-def: %s"
+                                  (point)
+                                  lsp-start-point
+                                  lsp-end-point
+                                  ast-def))
+           when (and (buffer-live-p ast-buffer)
+                     (>= (point) lsp-start-point)
+                     (<= (point) lsp-end-point))
+           collect
+           ;; the smallest matching region is the most specific
+           (list  (- lsp-end-point lsp-start-point) ast-buffer ast-line)))
+
 (defun codeql--src-point-to-ast-region-highlight (ast-buffer)
   "Return the closest matching AST match available for the thing at point in src buffer."
   (when (and (buffer-live-p ast-buffer)
@@ -1464,37 +1548,8 @@ This applies to both normal evaluation and quick evaluation.")
                  (get-buffer-window ast-buffer)))
     ;; XXX: move this to a more performant data structure in terms of lookups
     (when-let* ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions))
-                (candidates
-                 (cl-loop for ast-def in (hash-table-keys ast-definitions)
-                          for ast-buffer = (gethash ast-def ast-definitions)
-                          for ast-def-seq = (split-string ast-def ":")
-                          for src-line = (string-to-number (seq-elt ast-def-seq 0))
-                          for src-start-column = (string-to-number (seq-elt ast-def-seq 1))
-                          ;; src-end-column can be 1 if wasn't provided by the sarif
-                          for src-end-column = (string-to-number (seq-elt ast-def-seq 2))
-                          for ast-line = (string-to-number (seq-elt ast-def-seq 3))
-                          for point-line = (line-number-at-pos)
-                          for point-column = (codeql-lsp-abiding-column)
-                          for debug = (when (and nil (= point-line src-line))
-                                        (message "Considering: %s %s %s %s"
-                                                 ast-def
-                                                 point-column
-                                                 src-start-column
-                                                 src-end-column))
-                          when (and (buffer-live-p ast-buffer)
-                                    (= point-line src-line)
-                                    (>= point-column src-start-column)
-                                    ;; deal with src-end-column not being provided
-                                    (cond ;; order here matters!
-                                     ((< src-end-column src-start-column)
-                                      (<= point-column (+ src-start-column src-end-column)))
-                                     ((<= point-column src-end-column) t)
-                                     (t nil)))
-                          ;; collect candidates, car is diff between point-column and src-start-column
-                          ;; the smallest diff is the closest match from point
-                          collect
-                          (list (- point-column src-start-column) ast-buffer ast-line))))
-      (let ((closest-match (car (sort candidates (lambda (a b) (< (car a) (car b)))))))
+                (line-candidates (codeql--ast-line-candidates-for-point ast-definitions)))
+      (let ((closest-match (car (sort line-candidates (lambda (a b) (< (car a) (car b)))))))
         ;; we already have ast-buffer available here, so don't need the xref defs copy
         (cl-multiple-value-bind (diff _ ast-line) closest-match
           ;; check it's still alive/visible|focused just to be sure
@@ -1630,31 +1685,9 @@ a codeql database source archive."
 (cl-defmethod xref-backend-definitions ((_backend (eql codeql-ast)) symbol)
   "Show any AST definitions available for the thing at point."
   (if-let ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
-      (let ((candidates
-             (cl-loop for ast-def in (hash-table-keys ast-definitions)
-                      for ast-buffer = (gethash ast-def ast-definitions)
-                      for ast-def-seq = (split-string ast-def ":")
-                      for src-line = (string-to-number (seq-elt ast-def-seq 0))
-                      for src-start-column = (string-to-number (seq-elt ast-def-seq 1))
-                      for src-end-column = (string-to-number (seq-elt ast-def-seq 2))
-                      for ast-line = (string-to-number (seq-elt ast-def-seq 3))
-                      for point-line = (line-number-at-pos)
-                      for point-column = (codeql-lsp-abiding-column)
-                      when (and (buffer-live-p ast-buffer)
-                                (eql point-line src-line)
-                                (>= point-column src-start-column)
-                                ;; deal with src-end-column not being provided
-                                (cond
-                                 ((< src-end-column src-start-column)
-                                  (<= point-column (+ src-start-column src-end-column)))
-                                 ((<= point-column src-end-column) t)
-                                 (t nil)))
-                      ;; collect candidates, car is diff between point-column and src-start-column
-                      ;; the smallest diff is the closest match from point
-                      collect
-                      (list (- point-column src-start-column) ast-buffer ast-line))))
+      (let ((line-candidates (codeql--ast-line-candidates-for-point ast-definitions)))
         ;; sort the candidates by diff and return the closest match as an xref
-        (let ((closest-match (car (sort candidates (lambda (a b) (< (car a) (car b)))))))
+        (let ((closest-match (car (sort line-candidates (lambda (a b) (< (car a) (car b)))))))
           (cl-multiple-value-bind (diff ast-buffer ast-line) closest-match
             ;; append result to the normal definitions
             (if (and ast-buffer (buffer-live-p ast-buffer))
@@ -1684,7 +1717,7 @@ a codeql database source archive."
                for src = (seq-elt tuple 0)
                for dst = (seq-elt tuple 1)
                for src-start-line = (json-pointer-get src "/url/startLine")
-               for src-start-column = (json-pointer-get src "/url/startColumn")
+               for src-start-column = (or (json-pointer-get src "/url/startColumn") 1)
                for src-end-column = (json-pointer-get src "/url/endColumn")
                for filename = (format "%s%s" src-root (codeql--uri-to-filename (json-pointer-get dst "/url/uri")))
                for line = (json-pointer-get dst "/url/startLine")
@@ -1922,7 +1955,7 @@ Our implementation simply returns the thing at point as a candidate."
 (defun codeql--ast-to-org (sorted-tree src-filename src-buffer &optional buffer-context)
   ;; src-filename is (buffer-filename) for the src buffer ... XXX: check with TRAMP
   (let ((ast-buffer (get-buffer-create (format "* AST viewer: %s *" src-filename))))
-    (message "XXX: %s -> %s" src-filename src-buffer)
+    ;;(message "XXX: %s -> %s" src-filename src-buffer)
     (with-current-buffer ast-buffer
       ;; link the src buffer and the ast buffer in mutual harmony if it's still around
       (when (buffer-live-p src-buffer)
@@ -1930,7 +1963,7 @@ Our implementation simply returns the thing at point as a candidate."
         (puthash src-buffer ast-buffer codeql--src-to-ast-buffer))
       (setq buffer-read-only nil)
       (erase-buffer)
-      (insert (format "#+CODEQL_AST_VIEWER: %s\n\n" (file-name-nondirectory src-filename)))
+      (insert (format "#+AST_VIEWER: %s\n\n" (file-name-nondirectory src-filename)))
       (codeql--render-tree sorted-tree buffer-context)
       (goto-char (point-min))
       (setq buffer-read-only t)
@@ -1981,11 +2014,17 @@ Our implementation simply returns the thing at point as a candidate."
                          (ast-line (line-number-at-pos))
                          (ast-lookup-table (gethash full-src-path codeql--ast-backwards-definitions))
                          (entity-url (codeql--result-node-url result-node))
-                         (src-line (json-pointer-get entity-url "/startLine"))
-                         (src-start-column (json-pointer-get entity-url "/startColumn"))
+                         (src-start-line (json-pointer-get entity-url "/startLine"))
+                         (src-end-line (or (json-pointer-get entity-url "/endLine") src-start-line))
+                         (src-start-column (or (json-pointer-get entity-url "/startColumn") 1))
                          (src-end-column (json-pointer-get entity-url "/endColumn")))
                     ;; make all the info we need to build an AST definition available from our xref backend
-                    (puthash (format "%s:%s:%s:%s" src-line src-start-column src-end-column ast-line)
+                    (puthash (format "%s:%s:%s:%s:%s"
+                                     src-start-line
+                                     src-end-line
+                                     src-start-column
+                                     src-end-column
+                                     ast-line)
                              (current-buffer) ast-lookup-table))
 
                   ;; go into the active query buffer context and resolve from database
