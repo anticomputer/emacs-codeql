@@ -1458,7 +1458,10 @@ This applies to both normal evaluation and quick evaluation.")
 
 (defun codeql--src-point-to-ast-region-highlight (ast-buffer)
   "Return the closest matching AST match available for the thing at point in src buffer."
-  (when (buffer-live-p ast-buffer)
+  (when (and (buffer-live-p ast-buffer)
+             ;; only do things if ast-buffer is visible and/or focused
+             (or (eq ast-buffer (window-buffer (selected-window)))
+                 (get-buffer-window ast-buffer)))
     ;; XXX: move this to a more performant data structure in terms of lookups
     (when-let* ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions))
                 (candidates
@@ -1467,14 +1470,26 @@ This applies to both normal evaluation and quick evaluation.")
                           for ast-def-seq = (split-string ast-def ":")
                           for src-line = (string-to-number (seq-elt ast-def-seq 0))
                           for src-start-column = (string-to-number (seq-elt ast-def-seq 1))
+                          ;; src-end-column can be 1 if wasn't provided by the sarif
                           for src-end-column = (string-to-number (seq-elt ast-def-seq 2))
                           for ast-line = (string-to-number (seq-elt ast-def-seq 3))
                           for point-line = (line-number-at-pos)
                           for point-column = (codeql-lsp-abiding-column)
+                          for debug = (when (and nil (= point-line src-line))
+                                        (message "Considering: %s %s %s %s"
+                                                 ast-def
+                                                 point-column
+                                                 src-start-column
+                                                 src-end-column))
                           when (and (buffer-live-p ast-buffer)
-                                    (eql point-line src-line)
+                                    (= point-line src-line)
                                     (>= point-column src-start-column)
-                                    (<= point-column src-end-column))
+                                    ;; deal with src-end-column not being provided
+                                    (cond ;; order here matters!
+                                     ((< src-end-column src-start-column)
+                                      (<= point-column (+ src-start-column src-end-column)))
+                                     ((<= point-column src-end-column) t)
+                                     (t nil)))
                           ;; collect candidates, car is diff between point-column and src-start-column
                           ;; the smallest diff is the closest match from point
                           collect
@@ -1482,7 +1497,7 @@ This applies to both normal evaluation and quick evaluation.")
       (let ((closest-match (car (sort candidates (lambda (a b) (< (car a) (car b)))))))
         ;; we already have ast-buffer available here, so don't need the xref defs copy
         (cl-multiple-value-bind (diff _ ast-line) closest-match
-          ;; check it's still alive just to be sure
+          ;; check it's still alive/visible|focused just to be sure
           (when (and (buffer-live-p ast-buffer)
                      ;; only do things if ast-buffer is visible and/or focused
                      (or (eq ast-buffer (window-buffer (selected-window)))
@@ -1514,14 +1529,13 @@ This applies to both normal evaluation and quick evaluation.")
         ;; do a thing
         (codeql--src-point-to-ast-region-highlight ast-buffer)))))
 
+;; XXX: todo, I find ast->src less useful than src->ast
 (defun codeql--sync-ast-to-src-overlay ()
-  (message "XXX: ast-to-src!")
   (let ((src-buffer (gethash (current-buffer) codeql--ast-to-src-buffer)))
     (when (buffer-live-p src-buffer)
-      (message "Found an active src buffer for ast!")
       (unless (= (point) codeql--ast-last-point)
         (setq codeql--ast-last-point (point))
-        (message "GOTTA DO A THING IN AST")
+        ;;(message "GOTTA DO A THING IN AST")
         ))))
 
 ;; xref backend for our global ref/def caches
@@ -1629,7 +1643,12 @@ a codeql database source archive."
                       when (and (buffer-live-p ast-buffer)
                                 (eql point-line src-line)
                                 (>= point-column src-start-column)
-                                (<= point-column src-end-column))
+                                ;; deal with src-end-column not being provided
+                                (cond
+                                 ((< src-end-column src-start-column)
+                                  (<= point-column (+ src-start-column src-end-column)))
+                                 ((<= point-column src-end-column) t)
+                                 (t nil)))
                       ;; collect candidates, car is diff between point-column and src-start-column
                       ;; the smallest diff is the closest match from point
                       collect
@@ -1678,8 +1697,12 @@ a codeql database source archive."
                (let ((point-line (line-number-at-pos))
                      (point-column (codeql-lsp-abiding-column)))
                  (and (eql src-start-line point-line)
-                      (<= point-column src-end-column)
-                      (>= point-column src-start-column)))
+                      (>= point-column src-start-column)
+                      ;; deal with src-end-column not being provided
+                      (cond ((< src-end-column src-start-column)
+                             (<= point-column (+ src-start-column src-end-column)))
+                            ((<= point-column src-end-column) t)
+                            (t nil))))
                ;; if point is at a ref that we know about, collect the def
                collect
                (xref-make desc (xref-make-file-location (codeql--tramp-wrap filename) line (1- column)))))))
@@ -1706,8 +1729,12 @@ a codeql database source archive."
                (let ((point-line (line-number-at-pos))
                      (point-column (codeql-lsp-abiding-column)))
                  (and (eql dst-start-line point-line)
-                      (<= point-column dst-end-column)
-                      (>= point-column dst-start-column)))
+                      (>= point-column dst-start-column)
+                      ;; deal with src-end-column not being provided
+                      (cond ((<= src-end-column src-start-column)
+                             (<= point-column (+ src-start-column src-end-column)))
+                            ((<= point-column src-end-column) t)
+                            (t nil))))
                ;; if point is at a def that we know about, collect the ref
                collect
                (xref-make desc (xref-make-file-location (codeql--tramp-wrap filename) line (1- column)))))))
