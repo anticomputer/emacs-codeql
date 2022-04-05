@@ -519,12 +519,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 ;; local query history
 (defvar-local codeql--completed-query-history nil)
 
-(defun codeql--reset-def-ref-ast-cache ()
-  "Clear out all the buffer-local ref/def/ast caches."
-  (setq codeql--definitions-cache nil)
-  (setq codeql--references-cache nil)
-  (setq codeql--ast-cache nil))
-
 (defun codeql--query-server-on-shutdown (obj)
   ;; remove any active database from global database state
   (when codeql--database-dataset-folder
@@ -984,7 +978,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
      (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
        ;;(message "Success: %s" registeredDatabases)
        (with-current-buffer buffer
-         (codeql--reset-def-ref-ast-cache)
          (codeql--reset-database-state)
          (message "Deregistered: %s" database-dataset-folder))))
    :error-fn
@@ -1315,12 +1308,10 @@ This applies to both normal evaluation and quick evaluation.")
    :rule-id rule-id
    :locations
    ;; this returns a list of location nodes
-   (codeql--nodes-from-result-locations
-    locations message)
+   (codeql--nodes-from-locations locations message)
    :related-locations
    ;; this returns a list of related-location nodes
-   (codeql--nodes-from-result-locations
-    related-locations message)))
+   (codeql--nodes-from-locations related-locations message)))
 
 (defun codeql--paths-from-thread-flows (thread-flows)
   "Returns all paths out of THREAD-FLOWS."
@@ -1328,80 +1319,63 @@ This applies to both normal evaluation and quick evaluation.")
   (cl-loop for thread-flow across thread-flows
            for locations = (json-pointer-get thread-flow "/locations")
            ;; collect a path
-           collect (codeql--path-nodes-from-thread-flow-locations locations)))
+           collect (codeql--nodes-from-locations locations nil t)))
 
-(defun codeql--nodes-from-result-locations (locations message)
+(defun codeql--nodes-from-locations (locations &optional message is-thread-flow-location)
   "Returns a list of location nodes from result LOCATIONS."
   ;; note, this operates on an array of location objects, this is not the same
   ;; as the top level locations which are passed for a result ...
 
   ;; collect all path nodes out of locations
-  (cl-loop for location across locations
-           for i below (length locations)
-           for uri = (json-pointer-get location "/physicalLocation/artifactLocation/uri")
-           for uri-base-id = (json-pointer-get location "/physicalLocation/artifactLocation/uriBaseId")
-           for region = (json-pointer-get location "/physicalLocation/region")
-           ;; collect a node in a path
-           collect
-           (let* ((uri (if uri-base-id
-                           (format "file:%s/%s" uri-base-id uri)
-                         uri))
-                  (node
-                   (codeql--result-node-create
-                    :label (or (json-pointer-get location "/message/text") message)
-                    :mark "-->"
-                    :filename (or (codeql--uri-to-filename uri) uri)
-                    :line  (json-pointer-get region "/startLine")
-                    :column (json-pointer-get region "/startColumn")
-                    :visitable region
-                    ;; build a json alist to parse out for url
-                    :url `(
-                           ,(cons 'uri uri)
-                           ,(cons 'startLine (json-pointer-get region "/startLine"))
-                           ,(cons 'startColumn (json-pointer-get region "/startColumn"))
-                           ,(cons 'endColumn (json-pointer-get region "/endColumn"))))))
-             ;;(codeql--print-node node)
-             node)))
-
-(defun codeql--path-nodes-from-thread-flow-locations (locations)
-  "Returns a list of location nodes from thread-flow LOCATIONS."
-  ;; note, this operates on an array of location objects, this is not the same
-  ;; as the top level locations which are passed for a result ...
-
-  ;; collect all path nodes out of locations
-  (cl-loop for location across locations
-           for i below (length locations)
-           for uri = (json-pointer-get location "/location/physicalLocation/artifactLocation/uri")
-           for uri-base-id = (json-pointer-get location "/location/physicalLocation/artifactLocation/uriBaseId")
-           for region = (json-pointer-get location "/location/physicalLocation/region")
-           ;; collect a node in a path
-           collect
-           (let* ((uri (if uri-base-id
-                           (format "file:%s/%s" uri-base-id uri)
-                         uri))
-                  (path-node
-                   (codeql--result-node-create
-                    :label (json-pointer-get location "/location/message/text")
-                    :mark (cond ((eql i 0)
-                                 ;; source for a flow
-                                 "src")
-                                ((eql i (1- (length locations)))
-                                 ;; sink for a flow
-                                 "snk")
-                                (t
-                                 ;; step for a flow
-                                 "..."))
-                    :filename (or (codeql--uri-to-filename uri) uri)
-                    :line (json-pointer-get region "/startLine")
-                    :column (json-pointer-get region "/startColumn")
-                    :visitable region
-                    ;; build a json alist to parse out for url
-                    :url `(,(cons 'uri uri)
-                           ,(cons 'startLine (json-pointer-get region "/startLine"))
-                           ,(cons 'startColumn (json-pointer-get region "/startColumn"))
-                           ,(cons 'endColumn (json-pointer-get region "/endColumn"))))))
-             ;; ok we have a path-node, add it to the path list
-             path-node)))
+  (cl-loop
+   ;; if it's a threadFlowLocation, the actual location is nested one deeper
+   with prefix             = (if is-thread-flow-location "/location"  "")
+   with uri-index          = (format "%s%s" prefix "/physicalLocation/artifactLocation/uri")
+   with uri-base-id-index  = (format "%s%s" prefix"/physicalLocation/artifactLocation/uriBaseId")
+   with region-index       = (format "%s%s" prefix "/physicalLocation/region")
+   with message-index      = (format "%s%s" prefix "/message/text")
+   for location across locations
+   for i below (length locations)
+   for uri                 = (json-pointer-get location uri-index)
+   for uri-base-id         = (json-pointer-get location uri-base-id-index)
+   for region              = (json-pointer-get location region-index)
+   ;; collect a node in a path
+   collect
+   (let* ((uri (if uri-base-id
+                   (format "file:%s/%s" uri-base-id uri)
+                 uri))
+          (node
+           (codeql--result-node-create
+            :label (or (json-pointer-get location message-index) message)
+            :mark (if is-thread-flow-location
+                      ;; mark as a path node
+                      (cond ((eql i 0)
+                             ;; source for a flow
+                             "src")
+                            ((eql i (1- (length locations)))
+                             ;; sink for a flow
+                             "snk")
+                            (t
+                             ;; step for a flow
+                             "..."))
+                    ;; mark as a result node
+                    "-->")
+            :filename (or (codeql--uri-to-filename uri) uri)
+            :line  (json-pointer-get region "/startLine")
+            :column (or (json-pointer-get region "/startColumn") 1)
+            :visitable region
+            ;; build a json alist to parse out for url
+            :url `(,(cons 'uri uri)
+                   ,(cons 'startLine (json-pointer-get region "/startLine"))
+                   ,(cons 'endLine (or (json-pointer-get region "/endLine")
+                                       (json-pointer-get region "startLine")))
+                   ,(cons 'startColumn (or (json-pointer-get region "/startColumn") 1))
+                   ,(cons 'endColumn (json-pointer-get region "/endColumn"))
+                   ;; throw these in here just in case they exist and we need them
+                   ,(cons 'charOffset (json-pointer-get region "/charOffset"))
+                   ,(cons 'charLength (json-pointer-get region "charLength"))
+                   ,(cons 'snippet (json-pointer-get region "/snippet"))))))
+     node)))
 
 ;; template queries for definitions, references, and AST
 
@@ -2013,6 +1987,7 @@ We use this to provide backwards references into the AST buffer from the source 
 
        ;; SARIF parsing
        ;;
+       ;; https://codeql.github.com/docs/codeql-cli/sarif-output/
        ;; https://docs.github.com/en/code-security/code-scanning/integrating-with-code-scanning/sarif-support-for-code-scanning
        ;;
        ;; Parse out a path-problem or problem query result set
