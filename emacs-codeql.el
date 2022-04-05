@@ -122,6 +122,9 @@
 
 ;;; global user configuration options (XXX: move to defcustom)
 
+(defvar codeql-ast-sync-highlighting t
+  "Enable fancy AST viewer synchronized highlighting.")
+
 (defvar codeql-query-server-timeout 120
   "Query server compile/run timeout in seconds.")
 
@@ -1570,7 +1573,8 @@ If optional MARKER, return a marker instead"
                   (recenter))))
               (pulse-momentary-highlight-one-line (point)))))))))
 
-(defun codeql--ast-point-to-src-region (src-buffer))
+;; XXX: TODO: placeholder
+(defun codeql--ast-point-to-src-region-highlight (src-buffer))
 
 ;; post-command hooks that run locally in ast/src buffers
 (defun codeql--sync-src-to-ast-overlay ()
@@ -1582,7 +1586,7 @@ If optional MARKER, return a marker instead"
         ;; do a thing
         (codeql--src-point-to-ast-region-highlight ast-buffer)))))
 
-;; XXX: todo, I find ast->src less useful than src->ast
+;; XXX: TODO: I find ast->src less useful than src->ast
 (defun codeql--sync-ast-to-src-overlay ()
   (let ((src-buffer (gethash (current-buffer) codeql--ast-to-src-buffer)))
     (when (buffer-live-p src-buffer)
@@ -1629,8 +1633,9 @@ If optional MARKER, return a marker instead"
                        (xref-find-references identifier))))
     (local-set-key (kbd "M-,") #'xref-pop-marker-stack)
     ;; add a local post command hook so we can sync to ast region highlights
-    (setq codeql--src-last-point (point))
-    (add-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay 99 t)
+    (when codeql-ast-sync-highlighting
+      (setq codeql--src-last-point (point))
+      (add-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay 99 t))
     ;; source archive files are for browsing only!
     (setq buffer-read-only t)
     (message "Activated CodeQL source archive xref bindings in %s" (file-name-nondirectory (buffer-file-name)))
@@ -1968,8 +1973,9 @@ Our implementation simply returns the thing at point as a candidate."
       (save-excursion
         (org-mode)
         ;; add our highlighting sync
-        (setq codeql--ast-last-point (point))
-        (add-hook 'post-command-hook #'codeql--sync-ast-to-src-overlay 99 t)
+        (when codeql-ast-sync-highlighting
+          (setq codeql--ast-last-point (point))
+          (add-hook 'post-command-hook #'codeql--sync-ast-to-src-overlay 99 t))
         (switch-to-buffer-other-window (current-buffer))))))
 
 (defun codeql--render-node (node level &optional buffer-context)
