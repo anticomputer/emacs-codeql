@@ -193,11 +193,15 @@ QL syntax highlighting and indentation should now work fine.
 
 ## Usage
 
-### Query projects
-
-Create a project root containing a `qlpack.yml` QL pack definition and then create query files inside this project.
-
 NOTE: make sure that you enable the `projectile` configuration option if you intend to use LSP support via `eglot`, as `eglot` needs to send the project root as part of codeql langserver `workspaceFolders` initialization.
+
+### Quickstart Query projects
+
+The quickest way to get up and running with a working CodeQL development environment is through the [starter workspace](https://github.com/github/vscode-codeql-starter). For your convenience a `tools/init-starter-workspace.sh` bootstrap script is included with `emacs-codeql` that will clone and configure all the appropriate repositories. You can then start writing queries for the language of choice in any of the `codeql-custom-queries-*` directories.
+
+#### Custom Query Projects
+
+If you already have a bootstrapped codeql cli configuration and prefer not to use the starter workspace, you can create a project root containing a `qlpack.yml` QL pack definition and then create query files inside this project.
 
 For example, to start a Javascript query project, `projectroot/qlpack.yml` could contain:
 
@@ -213,7 +217,7 @@ See [CodeQL packs documentation](https://codeql.github.com/docs/codeql-cli/about
 
 ### Query files
 
-Edit a `.ql` or `.qll` file inside a `qlpack.yml` project root and run `M-x codeql-transient-query-server-interact` to open the `emacs-codeql` transient. This transient is bound to the value of `codeql-transient-binding` on initialization, which may be customized by the user by setting `codeql-transient-binding` to a keybinding of their liking.
+Edit a `.ql` or `.qll` file inside a `qlpack.yml` project root (e.g. a `codeql-custom-queries-*` directory) and run `M-x codeql-transient-query-server-interact` to open the `emacs-codeql` transient. This transient is bound to the value of `codeql-transient-binding` on initialization, which may be customized by the user by setting `codeql-transient-binding` to a keybinding of their liking.
 
 #### Syntax highlighting and indentation
 
