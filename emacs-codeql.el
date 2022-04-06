@@ -1553,15 +1553,14 @@ If optional MARKER, return a marker instead"
 ;; end of: https://github.com/joaotavora/eglot/blob/master/LICENSE
 
 ;; XXX: this is way too resource intensive still, make a vector index based lookup cache
-(defun codeql--ast-line-at-src-point (ast-definitions)
+(defun codeql--ast-line-at-src-point (ast-lookup-vector)
   (let ((line-candidates
-         (cl-loop for ast-def in (hash-table-keys ast-definitions)
-                  for ast-def-seq = (split-string ast-def ":")
-                  for src-start-line = (string-to-number (seq-elt ast-def-seq 0))
-                  for src-end-line = (string-to-number (seq-elt ast-def-seq 1))
-                  for src-start-column = (string-to-number (seq-elt ast-def-seq 2))
-                  for src-end-column = (string-to-number (seq-elt ast-def-seq 3))
-                  for ast-line = (string-to-number (seq-elt ast-def-seq 4))
+         (cl-loop for ast-def-seq across ast-lookup-vector
+                  for src-start-line = (aref ast-def-seq 0)
+                  for src-end-line = (aref ast-def-seq 1)
+                  for src-start-column = (aref ast-def-seq 2)
+                  for src-end-column = (aref ast-def-seq 3)
+                  for ast-line = (aref ast-def-seq 4)
                   for point-line = (line-number-at-pos)
                   ;; codeql result positions are 1 based, eglot lsp calcs expect 0 based
                   ;; these lsp calcs are very expensive, only do them when we're very close to finding a candidate
@@ -1589,8 +1588,8 @@ If optional MARKER, return a marker instead"
              ;; only do things if ast-buffer is visible and/or focused
              (or (eq ast-buffer (window-buffer (selected-window)))
                  (get-buffer-window ast-buffer)))
-    (when-let* ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
-      (cl-multiple-value-bind (ast-line _) (codeql--ast-line-at-src-point ast-definitions)
+    (when-let* ((ast-lookup-vector (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
+      (cl-multiple-value-bind (ast-line _) (codeql--ast-line-at-src-point ast-lookup-vector)
         (when (and ast-line (buffer-live-p ast-buffer)
                    ;; only do things if ast-buffer is visible and/or focused
                    (or (eq ast-buffer (window-buffer (selected-window)))
@@ -1740,8 +1739,8 @@ a codeql database source archive."
 ;; implement a special backend definition just for AST definitions
 (cl-defmethod xref-backend-definitions ((_backend (eql codeql-ast)) symbol)
   "Show any AST definitions available for the thing at point."
-  (if-let ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
-      (cl-multiple-value-bind (ast-line ast-buffer) (codeql--ast-line-at-src-point ast-definitions)
+  (if-let ((ast-lookup-vector (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
+      (cl-multiple-value-bind (ast-line ast-buffer) (codeql--ast-line-at-src-point ast-lookup-vector)
         ;; sort the candidates by diff and return the closest match as an xref
         (if (and ast-line ast-buffer (buffer-live-p ast-buffer))
             (list
@@ -2046,8 +2045,7 @@ Our implementation simply returns the thing at point as a candidate."
                                              codeql--database-source-archive-root
                                              src-filename))))))
                     (unless (gethash full-src-path codeql--ast-backwards-definitions)
-                      (puthash full-src-path (make-hash-table :test #'equal)
-                               codeql--ast-backwards-definitions)))
+                      (puthash full-src-path [] codeql--ast-backwards-definitions)))
 
                   ;; there's backwards messages in this stuff
                   (let* ((src-filename (codeql--result-node-filename result-node))
@@ -2058,20 +2056,16 @@ Our implementation simply returns the thing at point as a candidate."
                                              codeql--database-source-archive-root
                                              src-filename)))))
                          (ast-line (line-number-at-pos))
-                         (ast-lookup-table (gethash full-src-path codeql--ast-backwards-definitions))
+                         (ast-lookup-vector (gethash full-src-path codeql--ast-backwards-definitions))
                          (entity-url (codeql--result-node-url result-node))
                          (src-start-line (json-pointer-get entity-url "/startLine"))
                          (src-end-line (or (json-pointer-get entity-url "/endLine") src-start-line))
                          (src-start-column (or (json-pointer-get entity-url "/startColumn") 1))
                          (src-end-column (json-pointer-get entity-url "/endColumn")))
                     ;; make all the info we need to build an AST definition available from our xref backend
-                    (puthash (format "%s:%s:%s:%s:%s"
-                                     src-start-line
-                                     src-end-line
-                                     src-start-column
-                                     src-end-column
-                                     ast-line)
-                             (current-buffer) ast-lookup-table))
+                    (puthash full-src-path
+                             (vconcat `[,(vector src-start-line src-end-line src-start-column src-end-column ast-line)] ast-lookup-vector)
+                             codeql--ast-backwards-definitions))
 
                   ;; go into the active query buffer context and resolve from database
                   (save-excursion
