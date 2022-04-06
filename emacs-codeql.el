@@ -739,19 +739,21 @@ We use this to provide backwards references into the AST buffer from the source 
          ;; I like to use https://github.com/google/mount-zip so selfishly check for it here
          ((executable-find "mount-zip")
           (message "Mounting source archive with mount-zip.")
-          (codeql--shell-command-to-string
-           (format "%s -o nospecials -o nosymlinks -o nohardlinks %s %s"
-                   (executable-find "mount-zip" (file-remote-p default-directory))
-                   (codeql--file-truename codeql--database-source-archive-zip)
-                   (codeql--file-truename codeql--database-source-archive-root))))
+          (when (codeql--shell-command-to-string
+                 (format "%s -o nospecials -o nosymlinks -o nohardlinks %s %s"
+                         (executable-find "mount-zip" (file-remote-p default-directory))
+                         (codeql--file-truename codeql--database-source-archive-zip)
+                         (codeql--file-truename codeql--database-source-archive-root)))
+            (message "Mounted source archive with mount-zip.")))
          ;; fall back to regular full extraction here
          ((executable-find "unzip")
           (message "Extracting source archive with unzip.")
-          (codeql--shell-command-to-string
-           (format "%s %s -d %s"
-                   (executable-find "unzip" (file-remote-p default-directory))
-                   (codeql--file-truename codeql--database-source-archive-zip)
-                   (codeql--file-truename codeql--database-source-archive-root))))))
+          (when (codeql--shell-command-to-string
+                 (format "%s %s -d %s"
+                         (executable-find "unzip" (file-remote-p default-directory))
+                         (codeql--file-truename codeql--database-source-archive-zip)
+                         (codeql--file-truename codeql--database-source-archive-root)))
+            (message "Extracted source archive with unzip.")))))
     (message "Source archive already extracted|mounted.")
     t))
 
