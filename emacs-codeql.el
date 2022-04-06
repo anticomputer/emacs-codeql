@@ -1456,12 +1456,12 @@ This applies to both normal evaluation and quick evaluation.")
 (defvar-local codeql--ast-last-point nil)
 (defvar-local codeql--src-last-point nil)
 
-(defvar-local codeql--ast-line-to-src-regions (make-hash-table :test #'equal))
-(defvar-local codeql--src-line-to-ast-regions (make-hash-table :test #'equal))
+(defvar-local codeql--ast-overlay nil)
+(defvar-local codeql--src-overlay nil)
 
 ;; eglot code: https://github.com/joaotavora/eglot/blob/master/LICENSE
 
-;; note: this isn't the same as codeql-lsp-abiding column!
+;; note: this isn't the same as codeql-lsp-abiding column which operates on 1 based assumptions!
 (defun codeql--eglot-lsp-abiding-column (&optional lbp)
   "Calculate current COLUMN as defined by the LSP spec.
 LBP defaults to `line-beginning-position'."
@@ -1547,7 +1547,6 @@ If optional MARKER, return a marker instead"
              ;; only do things if ast-buffer is visible and/or focused
              (or (eq ast-buffer (window-buffer (selected-window)))
                  (get-buffer-window ast-buffer)))
-    ;; XXX: move this to a more performant data structure in terms of lookups
     (when-let* ((ast-definitions (gethash (buffer-file-name) codeql--ast-backwards-definitions))
                 (line-candidates (codeql--ast-line-candidates-for-point ast-definitions)))
       (let ((closest-match (car (sort line-candidates (lambda (a b) (< (car a) (car b)))))))
@@ -1571,6 +1570,22 @@ If optional MARKER, return a marker instead"
                   (goto-line ast-line)
                   (move-end-of-line nil)
                   (recenter))))
+              ;; XXX: I could make this overlay the entire subtree, but that's a little resource hoggy
+              (if (overlayp codeql--ast-overlay)
+                  ;; move overlay if we already have one
+                  (unless (= (overlay-start codeql--ast-overlay)
+                             (line-beginning-position))
+                    (move-overlay
+                     codeql--ast-overlay
+                     (line-beginning-position)
+                     (line-end-position)))
+                ;; make an overlay if we don't
+                (setq codeql--ast-overlay
+                      (make-overlay
+                       (line-beginning-position)
+                       (line-end-position)))
+                (overlay-put codeql--ast-overlay 'font-lock-face 'highlight))
+              ;; I prefer having a visual ping for each event in the AST
               (pulse-momentary-highlight-one-line (point)))))))))
 
 ;; XXX: TODO: placeholder
@@ -1587,13 +1602,13 @@ If optional MARKER, return a marker instead"
         (codeql--src-point-to-ast-region-highlight ast-buffer)))))
 
 ;; XXX: TODO: I find ast->src less useful than src->ast
+;; XXX: but we depend on codeql--ast-last-point being available
+;; XXX: so still keep this code around
 (defun codeql--sync-ast-to-src-overlay ()
   (let ((src-buffer (gethash (current-buffer) codeql--ast-to-src-buffer)))
     (when (buffer-live-p src-buffer)
       (unless (= (point) codeql--ast-last-point)
-        (setq codeql--ast-last-point (point))
-        ;;(message "GOTTA DO A THING IN AST")
-        ))))
+        (setq codeql--ast-last-point (point))))))
 
 ;; xref backend for our global ref/def caches
 
