@@ -1553,34 +1553,55 @@ If optional MARKER, return a marker instead"
 ;; end of: https://github.com/joaotavora/eglot/blob/master/LICENSE
 
 ;; XXX: this is way too resource intensive still, make a vector index based lookup cache
-(defun codeql--ast-line-at-src-point (ast-lookup-vector)
+;; XXX: something like, every line n can index into something that returns any potential
+;; XXX: match for that line n ... so we don't walk that entire vector every time
+
+;; not the fastest, but makes life easier for now
+(defvar-local codeql--ast-lookup-cache nil)
+
+;; do expensive calc once, then reuse after that
+(defun codeql--ast-lookup-cache-init (ast-lookup-vector)
+  (message "Building AST lookup cache ... please hold.")
+  ;; disable hooks while yolo-ing around with point in src buffer
+  (remove-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay :local)
+  (setq codeql--ast-lookup-cache
+        (cl-loop for ast-def-seq across ast-lookup-vector
+                 for i below (length ast-lookup-vector)
+                 for src-start-line = (aref ast-def-seq 0)
+                 for src-end-line = (aref ast-def-seq 1)
+                 for src-start-column = (aref ast-def-seq 2)
+                 for src-end-column = (aref ast-def-seq 3)
+                 for ast-line = (aref ast-def-seq 4)
+                 for lsp-start-point = (codeql--eglot--lsp-position-to-point `(:line ,(1- src-start-line) :character ,(1- src-start-column)))
+                 for lsp-end-point = (codeql--eglot--lsp-position-to-point `(:line ,(1- src-end-line) :character ,(1- src-end-column)))
+                 collect
+                 (vector src-start-line src-end-line src-start-column src-end-column ast-line lsp-start-point lsp-end-point)))
+  (message "AST lookup cache complete ... navigate away.")
+  (add-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay 99 :local))
+
+(defun codeql--ast-line-at-src-point (ast-lookup-vector &optional need-ast-buffer)
+  (unless codeql--ast-lookup-cache
+    (codeql--ast-lookup-cache-init ast-lookup-vector))
   (let ((line-candidates
-         (cl-loop for ast-def-seq across ast-lookup-vector
+         ;; we can optimize this much more if we also build a line to candidates index cache
+         (cl-loop for ast-def-seq in codeql--ast-lookup-cache
                   for src-start-line = (aref ast-def-seq 0)
                   for src-end-line = (aref ast-def-seq 1)
                   for src-start-column = (aref ast-def-seq 2)
                   for src-end-column = (aref ast-def-seq 3)
                   for ast-line = (aref ast-def-seq 4)
-                  for point-line = (line-number-at-pos)
-                  ;; codeql result positions are 1 based, eglot lsp calcs expect 0 based
-                  ;; these lsp calcs are very expensive, only do them when we're very close to finding a candidate
-                  ;; when (and (>= point-line src-start-line)
-                  ;;           (<= point-line src-end-line))
-                  for lsp-start-point = (and (>= point-line src-start-line)
-                                             (codeql--eglot--lsp-position-to-point
-                                              `(:line ,(1- src-start-line) :character ,(1- src-start-column))))
-                  for lsp-end-point = (and (<= point-line src-end-line)
-                                           (codeql--eglot--lsp-position-to-point
-                                            `(:line ,(1- src-end-line) :character ,(1- src-end-column))))
-                  when (and lsp-start-point lsp-end-point
-                            (>= (point) lsp-start-point)
+                  for lsp-start-point = (aref ast-def-seq 5)
+                  for lsp-end-point = (aref ast-def-seq 6)
+                  when (and (>= (point) lsp-start-point)
                             (<= (point) lsp-end-point))
-                  collect
-                  (list (- lsp-end-point lsp-start-point) ast-line))))
+                  collect (list (- lsp-end-point lsp-start-point) ast-line))))
+    ;; renable hook before we do anything else
     (when line-candidates
       (let ((nearest-match (car (sort line-candidates (lambda (a b) (< (car a) (car b)))))))
         (when nearest-match
-          (list (cadr nearest-match) (gethash (current-buffer) codeql--src-to-ast-buffer)))))))
+          (list (cadr nearest-match)
+                (when need-ast-buffer
+                  (gethash (current-buffer) codeql--src-to-ast-buffer))))))))
 
 (defun codeql--src-point-to-ast-region-highlight (ast-buffer)
   "Return the closest matching AST match available for the thing at point in src buffer."
@@ -1596,6 +1617,11 @@ If optional MARKER, return a marker instead"
                        (get-buffer-window ast-buffer)))
           (with-current-buffer ast-buffer
             (cond
+
+             ;; IMPORTANT:
+             ;; if we ever do something expensive in our ast buffer hooks
+             ;; remember to disable/enable the command hooks them as needed
+
              ;; we're the focused window for some inexplicable reason
              ((eq ast-buffer (window-buffer (selected-window)))
               (goto-line ast-line)
@@ -1630,7 +1656,6 @@ If optional MARKER, return a marker instead"
 
 ;; post-command hooks that run locally in ast/src buffers
 (defun codeql--sync-src-to-ast-overlay ()
-  (interactive)
   (let ((ast-buffer (gethash (current-buffer) codeql--src-to-ast-buffer)))
     (when (buffer-live-p ast-buffer)
       (unless (= (point) codeql--src-last-point)
@@ -1687,7 +1712,7 @@ If optional MARKER, return a marker instead"
     ;; add a local post command hook so we can sync to ast region highlights
     (when codeql-ast-sync-highlighting
       (setq codeql--src-last-point (point))
-      (add-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay 99 t))
+      (add-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay 99 :local))
     ;; source archive files are for browsing only!
     (setq buffer-read-only t)
     (message "Activated CodeQL source archive xref bindings in %s" (file-name-nondirectory (buffer-file-name)))
@@ -1740,7 +1765,7 @@ a codeql database source archive."
 (cl-defmethod xref-backend-definitions ((_backend (eql codeql-ast)) symbol)
   "Show any AST definitions available for the thing at point."
   (if-let ((ast-lookup-vector (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
-      (cl-multiple-value-bind (ast-line ast-buffer) (codeql--ast-line-at-src-point ast-lookup-vector)
+      (cl-multiple-value-bind (ast-line ast-buffer) (codeql--ast-line-at-src-point ast-lookup-vector t)
         ;; sort the candidates by diff and return the closest match as an xref
         (if (and ast-line ast-buffer (buffer-live-p ast-buffer))
             (list
@@ -2016,7 +2041,7 @@ Our implementation simply returns the thing at point as a candidate."
         ;; add our highlighting sync
         (when codeql-ast-sync-highlighting
           (setq codeql--ast-last-point (point))
-          (add-hook 'post-command-hook #'codeql--sync-ast-to-src-overlay 99 t))
+          (add-hook 'post-command-hook #'codeql--sync-ast-to-src-overlay 99 :local))
         (switch-to-buffer-other-window (current-buffer))))))
 
 (defun codeql--render-node (node level &optional buffer-context)
