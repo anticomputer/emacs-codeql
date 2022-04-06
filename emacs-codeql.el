@@ -759,22 +759,15 @@ We use this to provide backwards references into the AST buffer from the source 
   "Unmount a src zip archive if it was mounted."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert source-zip-root t)
-  (message "archive-root: %s" (codeql--file-truename source-zip-root))
-  (when-let ((umount (executable-find "umount"))
+  (when-let ((true-root (codeql--file-truename source-zip-root))
+             (umount (executable-find "umount"))
              (mountpoint (executable-find "mountpoint"))
              (mount-zip (executable-find "mount-zip")))
+    (message "archive-root: %s" true-root)
     ;; we only need to do this if mount-zip is available, since that's the only time src will be mounted
-    (when (and (codeql--file-exists-p (codeql--file-truename source-zip-root))
-               (= 0 (with-temp-buffer
-                      (shell-command
-                       (format "%s %s" mountpoint (codeql--file-truename source-zip-root))
-                       (current-buffer)
-                       (current-buffer))))
-               (= 0 (with-temp-buffer
-                      (shell-command
-                       (format "%s %s" umount (codeql--file-truename source-zip-root))
-                       (current-buffer)
-                       (current-buffer)))))
+    (when (and (codeql--file-exists-p true-root)
+               (codeql--shell-command-to-string (format "%s %s" mountpoint true-root))
+               (codeql--shell-command-to-string (format "%s %s" umount true-root)))
       (message "Umounted fuse mount for source archive."))))
 
 ;;; transient ui for buffer-local server state management
