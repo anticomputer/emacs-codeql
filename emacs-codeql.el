@@ -1568,7 +1568,7 @@ If optional MARKER, return a marker instead"
                  for lsp-start-point = (codeql--eglot--lsp-position-to-point `(:line ,(1- src-start-line) :character ,(1- src-start-column)))
                  for lsp-end-point = (codeql--eglot--lsp-position-to-point `(:line ,(1- src-end-line) :character ,(1- src-end-column)))
                  collect
-                 (vector src-start-line src-end-line src-start-column src-end-column ast-line lsp-start-point lsp-end-point)))
+                 (vector ast-line lsp-start-point lsp-end-point)))
   (message "AST lookup cache complete ... navigate away.")
   (add-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay 99 :local))
 
@@ -1578,13 +1578,9 @@ If optional MARKER, return a marker instead"
   (let ((line-candidates
          ;; we can optimize this much more if we also build a line to candidates index cache
          (cl-loop for ast-def-seq in codeql--ast-lookup-cache
-                  for src-start-line = (aref ast-def-seq 0)
-                  for src-end-line = (aref ast-def-seq 1)
-                  for src-start-column = (aref ast-def-seq 2)
-                  for src-end-column = (aref ast-def-seq 3)
-                  for ast-line = (aref ast-def-seq 4)
-                  for lsp-start-point = (aref ast-def-seq 5)
-                  for lsp-end-point = (aref ast-def-seq 6)
+                  for ast-line = (aref ast-def-seq 0)
+                  for lsp-start-point = (aref ast-def-seq 1)
+                  for lsp-end-point = (aref ast-def-seq 2)
                   when (and (>= (point) lsp-start-point)
                             (<= (point) lsp-end-point))
                   collect (list (- lsp-end-point lsp-start-point) ast-line))))
