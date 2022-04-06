@@ -1749,11 +1749,7 @@ a codeql database source archive."
                      (point-column (codeql-lsp-abiding-column)))
                  (and (eql src-start-line point-line)
                       (>= point-column src-start-column)
-                      ;; deal with src-end-column not being provided
-                      (cond ((< src-end-column src-start-column)
-                             (<= point-column (+ src-start-column src-end-column)))
-                            ((<= point-column src-end-column) t)
-                            (t nil))))
+                      (<= point-column src-end-column)))
                ;; if point is at a ref that we know about, collect the def
                collect
                (xref-make desc (xref-make-file-location (codeql--tramp-wrap filename) line (1- column)))))))
@@ -1781,11 +1777,7 @@ a codeql database source archive."
                      (point-column (codeql-lsp-abiding-column)))
                  (and (eql dst-start-line point-line)
                       (>= point-column dst-start-column)
-                      ;; deal with src-end-column not being provided
-                      (cond ((<= src-end-column src-start-column)
-                             (<= point-column (+ src-start-column src-end-column)))
-                            ((<= point-column src-end-column) t)
-                            (t nil))))
+                      (<= point-column src-end-column)))
                ;; if point is at a def that we know about, collect the ref
                collect
                (xref-make desc (xref-make-file-location (codeql--tramp-wrap filename) line (1- column)))))))
