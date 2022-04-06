@@ -1707,7 +1707,8 @@ If optional MARKER, return a marker instead"
       (setq codeql--src-last-point (point))
       (add-hook 'post-command-hook #'codeql--sync-src-to-ast-overlay 99 :local))
     ;; source archive files are for browsing only!
-    (setq buffer-read-only t)
+    (unless buffer-read-only
+      (setq buffer-read-only t))
     (message "Activated CodeQL source archive xref bindings in %s" (file-name-nondirectory (buffer-file-name)))
     (setq codeql--xref-has-bindings t)))
 
@@ -1864,10 +1865,12 @@ Our implementation simply returns the thing at point as a candidate."
       (when-let ((src-buffer (find-file-other-window filename)))
         (with-current-buffer src-buffer
           (widen)
-          (when line (org-goto-line (string-to-number line)))
-          ;; XXX: still need to deal with utf-16 code point calc
-          (when column (move-to-column (1- (string-to-number column)) t))
-          ;; enable our xref backend
+          ;; codeql is 1 based, eglot calcs are 0 based, adjust accordingly
+          (when (and column line)
+            (goto-char (codeql--eglot--lsp-position-to-point
+                        `(:line ,(1- (string-to-number line))
+                                :character ,(1- (string-to-number column))))))
+          ;; enable our xref backend, this kicks in templated queries for refs and defs
           (codeql-xref-backend))))))
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
