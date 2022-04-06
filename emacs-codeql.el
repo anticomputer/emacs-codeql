@@ -523,6 +523,7 @@ We use this to provide backwards references into the AST buffer from the source 
 
 (defun codeql--reset-database-state ()
   "Clear out all the buffer-local database state."
+  (codeql--database-unmount-source-archive-zip)
   (remhash (codeql--tramp-wrap codeql--database-source-archive-root) codeql--active-source-roots-with-buffers)
   (setq codeql--active-database nil)
   (setq codeql--active-database-language nil)
@@ -722,22 +723,54 @@ We use this to provide backwards references into the AST buffer from the source 
 
 (defun codeql--database-extract-source-archive-zip (trusted-root)
   "Return extraction-relative file listing for source archive zip."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (message "archive-root: %s" (codeql--file-truename codeql--database-source-archive-root))
   (message "trusted-root: %s" (codeql--file-truename trusted-root))
   (if (not (codeql--file-exists-p (codeql--file-truename codeql--database-source-archive-root)))
       (when (eql (string-match (codeql--file-truename trusted-root)
                                (codeql--file-truename codeql--database-source-archive-root)) 0)
-        ;; XXX: double check a malicious zip can't traverse out.
-        ;; XXX: double check codeql--database-source-archive-root for traversals.
-        ;; XXX: are malicious databases part of our threat model? decide.
-        (message "Source root verified to exist in trusted path ... extracting.")
-        (codeql--shell-command-to-string
-         (format "%s %s -d %s"
-                 (executable-find "unzip" (file-remote-p default-directory))
-                 (codeql--file-truename codeql--database-source-archive-zip)
-                 (codeql--file-truename codeql--database-source-archive-root))))
-    (message "Source archive already extracted.")
+        (message "Source root verified to exist in trusted path ... extracting|mounting.")
+        (cond
+         ;; I like to use https://github.com/google/mount-zip so selfishly check for it here
+         ((executable-find "mount-zip")
+          (message "Mounting source archive with mount-zip.")
+          (codeql--shell-command-to-string
+           (format "%s -o nospecials -o nosymlinks -o nohardlinks %s %s"
+                   (executable-find "mount-zip" (file-remote-p default-directory))
+                   (codeql--file-truename codeql--database-source-archive-zip)
+                   (codeql--file-truename codeql--database-source-archive-root))))
+         ;; fall back to regular full extraction here
+         ((executable-find "unzip")
+          (message "Extracting source archive with unzip.")
+          (codeql--shell-command-to-string
+           (format "%s %s -d %s"
+                   (executable-find "unzip" (file-remote-p default-directory))
+                   (codeql--file-truename codeql--database-source-archive-zip)
+                   (codeql--file-truename codeql--database-source-archive-root))))))
+    (message "Source archive already extracted|mounted.")
     t))
+
+(defun codeql--database-unmount-source-archive-zip ()
+  "Unmount a src zip archive if it was mounted."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (message "archive-root: %s" (codeql--file-truename codeql--database-source-archive-root))
+  (when-let ((umount (executable-find "umount"))
+             (mountpoint (executable-find "mountpoint"))
+             (mount-zip (executable-find "mount-zip")))
+    ;; we only need to do this if mount-zip is available, since that's the only time src will be mounted
+    (when
+        (and (codeql--file-exists-p (codeql--file-truename codeql--database-source-archive-root))
+             (= 0 (with-temp-buffer
+                    (shell-command
+                     (format "%s %s" mountpoint (codeql--file-truename codeql--database-source-archive-root))
+                     (current-buffer)
+                     (current-buffer))))
+             (= 0 (with-temp-buffer
+                    (shell-command
+                     (format "%s %s" umount (codeql--file-truename codeql--database-source-archive-root))
+                     (current-buffer)
+                     (current-buffer)))))
+      (message "Umounted fuse mount for source archive."))))
 
 ;;; transient ui for buffer-local server state management
 
