@@ -1301,10 +1301,10 @@ This applies to both normal evaluation and quick evaluation.")
       ;; return final org data
       (buffer-string))))
 
-(defun codeql--org-render-sarif-results (org-data &optional footer)
+(defun codeql--org-render-sarif-results (org-data &optional footer marker)
   "Render ORG-DATA including an optional FOOTER."
   ;; sarif results are org trees
-  (let ((buffer (generate-new-buffer "* codeql-org-results *")))
+  (let ((buffer (generate-new-buffer (format "* codeql-org-results:%s *" (if marker marker "")))))
     (with-current-buffer buffer
       (insert org-data)
       (org-mode)
@@ -1318,10 +1318,10 @@ This applies to both normal evaluation and quick evaluation.")
         (switch-to-buffer-other-window buffer))
       (buffer-string))))
 
-(defun codeql--org-render-raw-query-results (org-data &optional footer)
+(defun codeql--org-render-raw-query-results (org-data &optional footer marker)
   "Render ORG-DATA including an optional FOOTER."
   ;; raw results are org tables
-  (let ((buffer (generate-new-buffer "* codeql-org-results *")))
+  (let ((buffer (generate-new-buffer (format "* codeql-org-results:%s *" (if marker marker "")))))
     (with-current-buffer buffer
       (insert org-data)
       (org-mode)
@@ -2302,7 +2302,7 @@ Our implementation simply returns the thing at point as a candidate."
                    (with-temp-buffer
                      (cl-loop for org-data in org-results do (insert org-data))
                      (let ((rendered
-                            (codeql--org-render-sarif-results (buffer-string) footer)))
+                            (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
                        ;; save off the fully rendered version for speedy re-loads
                        (with-temp-file (format "%s.org" bqrs-path)
                          (insert rendered)))))))))))
@@ -2375,7 +2375,7 @@ Our implementation simply returns the thing at point as a candidate."
                    (codeql--query-results-to-org
                     codeql--query-results 'raw columns)))
               (when org-data
-                (let ((rendered (codeql--org-render-raw-query-results org-data footer)))
+                (let ((rendered (codeql--org-render-raw-query-results org-data footer (file-name-nondirectory query-path))))
                   (with-temp-file (format "%s.org" bqrs-path) (insert rendered))))))))))))
 
 (defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval &optional template-values src-filename src-buffer)
