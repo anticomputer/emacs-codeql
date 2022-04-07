@@ -2145,70 +2145,63 @@ Our implementation simply returns the thing at point as a candidate."
        ;; ** Related Locations
        ;; *** Location node
 
-       ((or (and (seq-contains-p compatible-query-kinds "PathProblem")
-                 (string= query-kind "path-problem")
-                 query-id)
+       ((or
+         ;; path-problem
+         (and (seq-contains-p compatible-query-kinds "PathProblem")
+              (string= query-kind "path-problem")
+              query-id)
+         ;; problem
+         (and (seq-contains-p compatible-query-kinds "Problem")
+              (string= query-kind "problem")
+              query-id))
 
-            ;; this is a problem
-            (and (seq-contains-p compatible-query-kinds "Problem")
-                 (string= query-kind "problem")
-                 query-id))
-
-        (let ((json (json-parse-string
-                     (codeql--bqrs-to-sarif bqrs-path query-id query-kind)
-                     :object-type 'alist)))
-
-          (cl-assert json t)
-
+        (when-let ((json (json-parse-string (codeql--bqrs-to-sarif bqrs-path query-id query-kind)
+                                            :object-type 'alist)))
           ;; render any available runs
           (cl-loop
            with runs = (json-pointer-get json "/runs")
            ;; runs is a vector
            for run across runs
            for run-id below (length runs)
-           do
-           (message "Rendering results for run %s" run-id)
-           (let* ((results (json-pointer-get run "/results"))
-                  (artifacts (json-pointer-get run "/artifacts")))
-
-             ;; check if we have any artifact contents, TODO: do something with 'm?
-             (let ((has-artifact-contents nil))
-               ;; artifacts is a vector
-               (cl-loop for artifact across artifacts
-                        for contents = (json-pointer-get artifact "/contents")
-                        do (when contents
-                             (message "Sarif artifact contents detected!")
-                             (setq has-artifacts-contents t)))
-
-               ;; alrighty, let's start processing some results into org data
-               (let ((org-results
-                      (cl-loop for result across results
-                               with n = (length results)
-                               for i below n
-                               for message = (json-pointer-get result "/message/text")
-                               for rule-id = (json-pointer-get result "/ruleId")
-                               for code-flows = (json-pointer-get result "/codeFlows")
-                               for related-locations = (json-pointer-get result "/relatedLocations")
-                               for locations = (json-pointer-get result "/locations")
-                               do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
-                               collect
-                               ;; each result gets collected as its resulting org-data
-                               (let* ((codeql--query-results (list (codeql--issue-with-nodes
-                                                                    code-flows
-                                                                    locations
-                                                                    related-locations
-                                                                    message rule-id)))
-                                      (kind (if code-flows 'path-problem 'problem)))
-                                 (codeql--query-results-to-org codeql--query-results kind nil)))))
-                 (when org-results
-                   ;; save off our results so we don't have to re-render for history
-                   (with-temp-buffer
-                     (cl-loop for org-data in org-results do (insert org-data))
-                     (let ((rendered
-                            (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
-                       ;; save off the fully rendered version for speedy re-loads
-                       (with-temp-file (format "%s.org" bqrs-path)
-                         (insert rendered)))))))))))
+           for results = (json-pointer-get run "/results")
+           for artifacts = (json-pointer-get run "/artifacts")
+           do (message "Rendering results for run %s" run-id)
+           ;; check if we have any artifact contents, TODO: do something with 'm?
+           (let ((has-artifact-contents
+                  (cl-loop for artifact across artifacts
+                           for contents = (json-pointer-get artifact "/contents")
+                           when contents
+                           do
+                           (message "Found artifact contents.")
+                           (cl-return t)))))
+           ;; alrighty, let's start processing some results into org data
+           (when-let ((org-results
+                       (cl-loop for result across results
+                                with n = (length results)
+                                for i below n
+                                for message = (json-pointer-get result "/message/text")
+                                for rule-id = (json-pointer-get result "/ruleId")
+                                for code-flows = (json-pointer-get result "/codeFlows")
+                                for related-locations = (json-pointer-get result "/relatedLocations")
+                                for locations = (json-pointer-get result "/locations")
+                                do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
+                                collect
+                                ;; each result gets collected as its resulting org-data
+                                (let* ((codeql--query-results (list (codeql--issue-with-nodes
+                                                                     code-flows
+                                                                     locations
+                                                                     related-locations
+                                                                     message rule-id)))
+                                       (kind (if code-flows 'path-problem 'problem)))
+                                  (codeql--query-results-to-org codeql--query-results kind nil)))))
+             ;; save off our results so we don't have to re-render for history
+             (with-temp-buffer
+               (cl-loop for org-data in org-results do (insert org-data))
+               (let ((rendered
+                      (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
+                 ;; save off the fully rendered version for speedy re-loads
+                 (with-temp-file (format "%s.org" bqrs-path)
+                   (insert rendered))))))))
 
        ;; fall through to raw results parsing
        (t
@@ -2234,41 +2227,36 @@ Our implementation simply returns the thing at point as a candidate."
                 ;; tuples are array of tuple, tuple are array of element
                 (cl-loop for tuple across tuples do
                          (let ((row-data nil))
-                           (cl-loop for element across tuple do
-                                    (cond
+                           (cl-loop
+                            for element across tuple
+                            do (cond
+                                ;; node with location info
+                                ((and (listp element)
+                                      (json-pointer-get element "/url"))
+                                 (let ((node (codeql--result-node-create
+                                              :label (json-pointer-get element "/label")
+                                              :mark "→"
+                                              :filename (codeql--uri-to-filename
+                                                         (json-pointer-get element "/url/uri"))
+                                              :line (json-pointer-get element "/url/startLine")
+                                              :column (json-pointer-get element "/url/startColumn")
+                                              :visitable t
+                                              :url (json-pointer-get element "/url"))))
+                                   (cl-pushnew node row-data)))
+                                ;; node with no location info, but with a label
+                                ((and (listp element)
+                                      (json-pointer-get element "/label"))
+                                 (let ((node (codeql--result-node-create
+                                              :label (json-pointer-get element "/label")
+                                              :mark "≔")))
+                                   (cl-pushnew node row-data)))
 
-                                     ;; object with url info
-                                     ((and (eq (type-of element) 'cons)
-                                           (json-pointer-get element "/url"))
-                                      (let ((node (codeql--result-node-create
-                                                   :label (json-pointer-get element "/label")
-                                                   :mark "→"
-                                                   :filename (codeql--uri-to-filename
-                                                              (json-pointer-get element "/url/uri"))
-                                                   :line (json-pointer-get element "/url/startLine")
-                                                   :column (json-pointer-get element "/url/startColumn")
-                                                   :visitable t
-                                                   :url (json-pointer-get element "/url"))))
-                                        ;;(message "XXX url node: %s" node)
-                                        (cl-pushnew node row-data)))
-
-                                     ;; object with no url info
-                                     ((and (eq (type-of element) 'cons)
-                                           (not (json-pointer-get element "/url")))
-                                      (let ((node (codeql--result-node-create
-                                                   :label (json-pointer-get element "/label")
-                                                   :mark "≔")))
-                                        ;;(message "XXX no-url node: %s" node)
-                                        (cl-pushnew node row-data)))
-
-                                     ;; string|number literal
-                                     ((or (eq (type-of element) 'string)
-                                          (eq (type-of element) 'integer))
-                                      (let ((node (codeql--result-node-create
-                                                   :label element
-                                                   :mark "≔")))
-                                        ;;(message "XXX literal node: %s" node)
-                                        (cl-pushnew node row-data)))))
+                                ;; everything else is a literal node
+                                (t
+                                 (let ((node (codeql--result-node-create
+                                              :label element
+                                              :mark "≔")))
+                                   (cl-pushnew node row-data)))))
                            ;; represent each tuple as a row of node columns
                            (cl-pushnew row-data codeql--query-results))))
             (message "No results in bqrs."))
