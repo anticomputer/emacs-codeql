@@ -2271,8 +2271,14 @@ Our implementation simply returns the thing at point as a candidate."
                 (let ((rendered (codeql--org-render-raw-query-results org-data footer (file-name-nondirectory query-path))))
                   (with-temp-file (format "%s.org" bqrs-path) (insert rendered))))))))))))
 
-;; XXX: too many args, move to a struct
-(defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval &optional template-values src-filename src-buffer)
+(defun codeql--query-server-request-run (buffer-context
+                                         qlo-path
+                                         bqrs-path
+                                         query-path
+                                         query-info
+                                         db-path
+                                         quick-eval
+                                         &optional template-values src-filename src-buffer)
   "Request a query evaluation from the query server."
   (with-current-buffer buffer-context
     (let ((run-query-params
@@ -2338,7 +2344,16 @@ Our implementation simply returns the thing at point as a candidate."
                                           :id ,id)
                             codeql--completed-query-history)))
                        ;; display results
-                       (codeql-load-bqrs bqrs-path query-path db-path name kind id src-filename codeql--database-source-archive-root src-buffer))))
+                       (codeql-load-bqrs
+                        bqrs-path
+                        query-path
+                        db-path
+                        name
+                        kind
+                        id
+                        src-filename
+                        codeql--database-source-archive-root
+                        src-buffer))))
                (message "No query results in %s!" bqrs-path)))))
        :error-fn
        (jsonrpc-lambda (&key code message _data &allow-other-keys)
@@ -2346,7 +2361,16 @@ Our implementation simply returns the thing at point as a candidate."
        :deferred :evaluation/runQueries))))
 
 ;; XXX: too many args, move to a struct
-(defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval &optional template-values src-filename src-buffer)
+(defun codeql--query-server-request-compile-and-run (buffer-context
+                                                     library-path
+                                                     qlo-path
+                                                     bqrs-path
+                                                     query-path
+                                                     query-info
+                                                     db-path
+                                                     db-scheme
+                                                     quick-eval
+                                                     &optional template-values src-filename src-buffer)
   "Request query compilation from the query server."
 
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
