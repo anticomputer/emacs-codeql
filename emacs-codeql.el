@@ -1519,12 +1519,12 @@ Sets an optional HEADER."
 
              ;; we're the focused window for some inexplicable reason
              ((eq ast-buffer (window-buffer (selected-window)))
-              (goto-char (point-min)) (forward-line ast-line) (move-end-of-line nil)
+              (goto-char (point-min)) (forward-line (1- ast-line)) (move-end-of-line nil)
               (recenter))
              ;; we're an unfocused window but visible as expected
              ((get-buffer-window ast-buffer)
               (with-selected-window (get-buffer-window ast-buffer)
-                (goto-char (point-min)) (forward-line ast-line) (move-end-of-line nil)
+                (goto-char (point-min)) (forward-line (1- ast-line)) (move-end-of-line nil)
                 (recenter))))
             ;; XXX: I could make this overlay the entire subtree, but that's a little resource hoggy
             (if (overlayp codeql--ast-overlay)
@@ -1668,7 +1668,7 @@ a codeql database source archive."
                          ast-buffer
                          (save-excursion
                            (with-current-buffer ast-buffer
-                             (goto-char (point-min)) (forward-line ast-line) (move-end-of-line nil)
+                             (goto-char (point-min)) (forward-line (1- ast-line)) (move-end-of-line nil)
                              (pulse-momentary-highlight-one-line (point))
                              (point))))))
           ;; buffer must have disappeared, yank it from the cache
