@@ -824,15 +824,15 @@ We use this to provide backwards references into the AST buffer from the source 
                (format "gh %s" cmd) cmd))
       (with-temp-buffer (insert-file-contents sarif-file) (buffer-string)))))
 
-(defun codeql--database-archive-zipinfo ()
-  "Return extraction-relative file listing for source archive zip."
-  (let ((zipinfo (codeql--shell-command-to-string
-                  (format "%s -1 %s"
-                          (executable-find "zipinfo" (file-remote-p default-directory))
-                          codeql--database-source-archive-zip))))
-    (when zipinfo
-      (let ((zipinfo-relative-paths
-             (cl-map 'list (lambda (file) file) (split-string zipinfo "\n"))))))))
+;; (defun codeql--database-archive-zipinfo ()
+;;   "Return extraction-relative file listing for source archive zip."
+;;   (let ((zipinfo (codeql--shell-command-to-string
+;;                   (format "%s -1 %s"
+;;                           (executable-find "zipinfo" (file-remote-p default-directory))
+;;                           codeql--database-source-archive-zip))))
+;;     (when zipinfo
+;;       (let ((zipinfo-relative-paths
+;;              (cl-map 'list (lambda (file) file) (split-string zipinfo "\n"))))))))
 
 (defun codeql--database-extract-source-archive-zip (trusted-root)
   "Return extraction-relative file listing for source archive zip."
@@ -1509,22 +1509,21 @@ We use this to provide backwards references into the AST buffer from the source 
                    (or (eq ast-buffer (window-buffer (selected-window)))
                        (get-buffer-window ast-buffer)))
           (with-current-buffer ast-buffer
+            ;; we don't want to save-excursion here
+            (widen)
             (cond
-
              ;; IMPORTANT:
              ;; if we ever do something expensive in our ast buffer hooks
              ;; remember to disable/enable the command hooks them as needed
 
              ;; we're the focused window for some inexplicable reason
              ((eq ast-buffer (window-buffer (selected-window)))
-              (goto-line ast-line)
-              (move-end-of-line nil)
+              (goto-char (point-min)) (forward-line ast-line) (move-end-of-line nil)
               (recenter))
              ;; we're an unfocused window but visible as expected
              ((get-buffer-window ast-buffer)
               (with-selected-window (get-buffer-window ast-buffer)
-                (goto-line ast-line)
-                (move-end-of-line nil)
+                (goto-char (point-min)) (forward-line ast-line) (move-end-of-line nil)
                 (recenter))))
             ;; XXX: I could make this overlay the entire subtree, but that's a little resource hoggy
             (if (overlayp codeql--ast-overlay)
@@ -1668,8 +1667,7 @@ a codeql database source archive."
                          ast-buffer
                          (save-excursion
                            (with-current-buffer ast-buffer
-                             (goto-line ast-line)
-                             (move-end-of-line nil)
+                             (goto-char (point-min)) (forward-line ast-line) (move-end-of-line nil)
                              (pulse-momentary-highlight-one-line (point))
                              (point))))))
           ;; buffer must have disappeared, yank it from the cache
@@ -1879,7 +1877,8 @@ Our implementation simply returns the thing at point as a candidate."
                         ;; check if this item has a known parent
                         (when-let ((parent (gethash (gethash entity-id child-to-parent) id-to-item)))
                           (setf (codeql--ast-item-parent item) parent)
-                          (setf (codeql--ast-item-children parent) (vconcat (codeql--ast-item-children parent) `[,item])))
+                          (setf (codeql--ast-item-children parent)
+                                (vconcat (codeql--ast-item-children parent) `[,item])))
 
                         ;; check if this item has known children, children is a vector
                         (when-let ((children (gethash entity-id parent-to-children)))
@@ -1888,12 +1887,15 @@ Our implementation simply returns the thing at point as a candidate."
                                    when child
                                    do
                                    (setf (codeql--ast-item-parent child) item)
-                                   (setf (codeql--ast-item-children item) (vconcat (codeql--ast-item-children item) `[,child]))))))))
+                                   (setf (codeql--ast-item-children item)
+                                         (vconcat (codeql--ast-item-children item) `[,child]))))))))
 
       ;; round 3: sort the tree
-      (cl-maphash
+      (maphash
        (lambda (_ item)
-         (setf (codeql--ast-item-order item) (or (gethash (codeql--ast-item-id item) ast-order) most-positive-fixnum))
+         (setf (codeql--ast-item-order item)
+               (or (gethash (codeql--ast-item-id item) ast-order)
+                   most-positive-fixnum))
          (unless (or (codeql--ast-item-parent item))
            (setq roots (vconcat roots `[,item]))))
        id-to-item)
@@ -2681,7 +2683,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
   (when (eq major-mode 'ql-tree-sitter-mode)
     (if codeql--query-server
         ;; just go straight to stopping the server in this case
-        (codeql-transient-query-server-stop)
+        (call-interactively #'codeql-transient-query-server-stop)
       (transient-setup 'codeql-transient-query-server-init-start))))
 
 (defun codeql-set-max-paths (max-paths)
