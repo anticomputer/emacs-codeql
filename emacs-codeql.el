@@ -894,7 +894,7 @@ Provides backwards references into the AST buffer from the source file.")
 
 (defun codeql-query-server-register-database (database-path)
   "Register a database with the query server."
-  (interactive (read-file-name "Database: " nil default-directory t))
+  (interactive (list (read-file-name "Database: " nil default-directory t)))
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
 
   ;; if no server is running yet, offer to start one
