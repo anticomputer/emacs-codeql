@@ -2227,43 +2227,36 @@ Our implementation simply returns the thing at point as a candidate."
                 ;; tuples are array of tuple, tuple are array of element
                 (cl-loop for tuple across tuples do
                          (let ((row-data nil))
-                           (cl-loop for element across tuple do
-                                    (cond
+                           (cl-loop
+                            for element across tuple
+                            do (cond
+                                ;; node with location info
+                                ((and (listp element)
+                                      (json-pointer-get element "/url"))
+                                 (let ((node (codeql--result-node-create
+                                              :label (json-pointer-get element "/label")
+                                              :mark "→"
+                                              :filename (codeql--uri-to-filename
+                                                         (json-pointer-get element "/url/uri"))
+                                              :line (json-pointer-get element "/url/startLine")
+                                              :column (json-pointer-get element "/url/startColumn")
+                                              :visitable t
+                                              :url (json-pointer-get element "/url"))))
+                                   (cl-pushnew node row-data)))
+                                ;; node with no location info, but with a label
+                                ((and (listp element)
+                                      (json-pointer-get element "/label"))
+                                 (let ((node (codeql--result-node-create
+                                              :label (json-pointer-get element "/label")
+                                              :mark "≔")))
+                                   (cl-pushnew node row-data)))
 
-                                     ;; XXX: clean this up, this was day 1 stuff
-
-                                     ;; object with url info
-                                     ((and (eq (type-of element) 'cons)
-                                           (json-pointer-get element "/url"))
-                                      (let ((node (codeql--result-node-create
-                                                   :label (json-pointer-get element "/label")
-                                                   :mark "→"
-                                                   :filename (codeql--uri-to-filename
-                                                              (json-pointer-get element "/url/uri"))
-                                                   :line (json-pointer-get element "/url/startLine")
-                                                   :column (json-pointer-get element "/url/startColumn")
-                                                   :visitable t
-                                                   :url (json-pointer-get element "/url"))))
-                                        ;;(message "XXX url node: %s" node)
-                                        (cl-pushnew node row-data)))
-
-                                     ;; object with no url info
-                                     ((and (eq (type-of element) 'cons)
-                                           (not (json-pointer-get element "/url")))
-                                      (let ((node (codeql--result-node-create
-                                                   :label (json-pointer-get element "/label")
-                                                   :mark "≔")))
-                                        ;;(message "XXX no-url node: %s" node)
-                                        (cl-pushnew node row-data)))
-
-                                     ;; string|number literal
-                                     ((or (eq (type-of element) 'string)
-                                          (eq (type-of element) 'integer))
-                                      (let ((node (codeql--result-node-create
-                                                   :label element
-                                                   :mark "≔")))
-                                        ;;(message "XXX literal node: %s" node)
-                                        (cl-pushnew node row-data)))))
+                                ;; everything else is a literal node
+                                (t
+                                 (let ((node (codeql--result-node-create
+                                              :label element
+                                              :mark "≔")))
+                                   (cl-pushnew node row-data)))))
                            ;; represent each tuple as a row of node columns
                            (cl-pushnew row-data codeql--query-results))))
             (message "No results in bqrs."))
