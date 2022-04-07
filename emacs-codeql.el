@@ -120,51 +120,84 @@
         (cl-assert (eql 0 (shell-command cmd))))
     (error "emacs-codeql does not work without tree-sitter-langs support.")))
 
-;;; global user configuration options (XXX: move to defcustom)
+;;; global user configuration options
 
-(defvar codeql-ast-sync-highlighting t
-  "Enable fancy AST viewer synchronized highlighting.")
+(defgroup emacs-codeql nil
+  "Emacs CodeQL support configuration."
+  :prefix "emacs-codeql"
+  :group 'emacs-codeql)
 
-(defvar codeql-query-server-timeout 120
-  "Query server compile/run timeout in seconds.")
+(defcustom codeql-ast-sync-highlighting t
+  "Enable fancy AST viewer synchronized highlighting."
+  :type 'boolean
+  :group 'emacs-codeql)
 
-(defvar codeql-transient-binding "C-c C-d"
-  "The keybinding to start the emacs-codeql transient ui inside ql-tree-sitter-mode.")
+(defcustom codeql-query-server-timeout 120
+  "Query server compile/run timeout in seconds."
+  :type 'integer
+  :group 'emacs-codeql)
 
-(defvar codeql-enable-xrefs t
-  "Enable CodeQL xref support for database source archives.")
+(defcustom codeql-transient-binding "C-c C-d"
+  "The keybinding to start the emacs-codeql transient ui inside ql-tree-sitter-mode."
+  :type 'key-sequence
+  :group 'emacs-codeql)
 
-(defvar codeql-enable-remote-xrefs t
-  "Enable CodeQL xref support for database source archives in remote sessions.")
+(defcustom codeql-enable-xrefs t
+  "Enable CodeQL xref support for database source archives."
+  :type 'boolean
+  :group 'emacs-codeql)
 
-(defvar codeql-configure-eglot-lsp t
+(defcustom codeql-enable-remote-xrefs t
+  "Enable CodeQL xref support for database source archives in remote sessions."
+  :type 'boolean
+  :group 'emacs-codeql)
+
+(defcustom codeql-configure-eglot-lsp t
   "Use eglot for LSP support by default.
 
-emacs-codeql requires eglot 20220326.2143 or newer from MELPA.")
+emacs-codeql requires eglot 20220326.2143 or newer from MELPA."
+  :type 'boolean
+  :group 'emacs-codeql)
 
-(defvar codeql-verbose-commands nil
-  "Be verbose about which commands we're running at any given time.")
+(defcustom codeql-verbose-commands nil
+  "Be verbose about which commands we're running at any given time."
+  :type 'boolean
+  :group 'emacs-codeql)
 
-(defvar codeql-configure-projectile t
-  "Configure project by default.")
+(defcustom codeql-configure-projectile t
+  "Configure project by default."
+  :type 'boolean
+  :group 'emacs-codeql)
 
-(defvar codeql--query-server-max-ram nil
-  "The max amount of RAM to use for query server evaluations, leave nil for default.")
-
-(defvar codeql-query-server-events-buffer-size 2000000
-  "The scrollback size for query server event buffers.")
-
-(defvar codeql-state-dir "~/.config/codeql/emacs"
+(defcustom codeql-state-dir "~/.config/codeql/emacs"
   "Base directory for codeql emacs state maintenance.
 
 It is important to keep this as a ~/relative path so that it will resolve both
-in local and remote contexts to something that readily exists.")
+in local and remote contexts to something that readily exists."
+  :type 'directory
+  :group 'emacs-codeql)
+
+(defcustom codeql-max-raw-results 2000
+  "The max amount of raw result tuples to render in an org-table."
+  :type 'integer
+  :group 'emacs-codeql)
+
+(defcustom codeql-use-gh-codeql-extension-when-available t
+  "If emacs-codeql detects the presence of a codeql enabled gh cli, use it.
+
+See https://github.com/github/gh-codeql for more information."
+  :type 'boolean
+  :group 'emacs-codeql)
+
+(defcustom codeql-query-server-events-buffer-size 2000000
+  "The scrollback size for query server event buffers."
+  :type 'integer
+  :group 'emacs-codeql)
+
+;; globals that the user normally shouldn't have to touch, but may
 
 (defvar codeql-cli (executable-find "codeql")
   "Path to codeql-cli")
-
-(defvar codeql-use-gh-codeql-extension-when-available t
-  "If emacs-codeql detects the presence of a codeql enabled gh cli, use it.")
 
 (defvar codeql-search-paths
   ;; file expansion happens buffer-local so that these work remotely as well
@@ -183,6 +216,19 @@ per:
 
 https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/")
 
+;; internal variables and configurations
+
+(defvar codeql--run-query-always-save t
+  "Whether you always want to save prior to query evaluation.
+
+Evaluation requires a synced position in the query file on disk, such that the
+query server can grab the right contents.
+
+This applies to both normal evaluation and quick evaluation.")
+
+(defvar codeql--query-server-max-ram nil
+  "The max amount of RAM to use for query server evaluations, leave nil for default.")
+
 ;; we use buffer-local copies of these so we can play context dependent tricks
 (defvar-local codeql--cli-buffer-local nil)
 (defvar-local codeql--search-paths-buffer-local nil)
@@ -194,9 +240,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
     (error nil)))
 
 (defvar-local codeql--use-gh-cli nil)
-
-(defvar codeql-max-raw-results 2000
-  "The max amount of raw result tuples to render in an org-table.")
 
 (defun codeql--search-paths-from-codeql-config ()
   "Grab search paths from the codeql cli configuration file."
@@ -236,6 +279,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
   (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
 ;; Projectile configuration
+
 (when codeql-configure-projectile
   (require 'projectile)
   ;; use projectile for project root management
@@ -247,6 +291,8 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
    ;; :run ""
    ;; :test-suffix ""
    :project-file "qlpack.yml"))
+
+;; Eglot configuration
 
 (defun codeql--lang-server-contact (i)
   "Return the currently configured LSP server parameters."
@@ -265,7 +311,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
     (message "Using LSP server cmd: %s" lsp-server-cmd)
     lsp-server-cmd))
 
-;; LSP configuration
 (when codeql-configure-eglot-lsp
   (require 'eglot)
 
@@ -369,7 +414,73 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 (defvar codeql-results-dir (concat codeql-state-dir "/results"))
 (defvar codeql-tmp-dir (concat codeql-state-dir "/tmp"))
 
-;; helper functions to deal with tramp contexts
+;; Eglot lsp-to-point routines that deal with utf-16 code points
+;;
+;; START LICENSING: https://github.com/joaotavora/eglot/blob/master/LICENSE
+
+;;; deal with utf-16 code points for column calculations, modified from eglot
+(defun codeql--lsp-abiding-column ()
+  "Calculate current COLUMN as defined by the LSP spec."
+  ;; codeql query server uses 1-based column values and utf-16 code points
+  (/ (length
+      (encode-coding-region
+       (line-beginning-position)
+       (min (point) (point-max)) 'utf-16 t))
+     2))
+
+;; note: this isn't the same as codeql-lsp-abiding column which is 1-based
+(defun codeql--eglot-lsp-abiding-column (&optional lbp)
+  "Calculate current COLUMN as defined by the LSP spec.
+LBP defaults to `line-beginning-position'."
+  (/ (- (length
+         (encode-coding-region
+          (or lbp (line-beginning-position))
+          ;; Fix github#860
+          (min (point) (point-max)) 'utf-16 t))
+        2)
+     2))
+
+(cl-defmacro codeql--eglot--widening (&rest body)
+  "Save excursion and restriction.  Widen.  Then run BODY." (declare (debug t))
+  `(save-excursion (save-restriction (widen) ,@body)))
+
+(defun codeql--eglot-move-to-lsp-abiding-column (column)
+  "Move to COLUMN abiding by the LSP spec."
+  (save-restriction
+    (cl-loop
+     with lbp = (line-beginning-position)
+     initially
+     (narrow-to-region lbp (line-end-position))
+     (move-to-column column)
+     for diff = (- column
+                   (codeql--eglot-lsp-abiding-column lbp))
+     until (zerop diff)
+     do (condition-case eob-err
+            (forward-char (/ (if (> diff 0) (1+ diff) (1- diff)) 2))
+          (end-of-buffer (cl-return eob-err))))))
+
+(defun codeql--eglot--lsp-position-to-point (pos-plist &optional marker)
+  "Convert LSP position POS-PLIST to Emacs point.
+If optional MARKER, return a marker instead"
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (forward-line (min most-positive-fixnum
+                         (plist-get pos-plist :line)))
+      (unless (eobp) ;; if line was excessive leave point at eob
+        (let ((tab-width 1)
+              (col (plist-get pos-plist :character)))
+          (unless (wholenump col)
+            (message "Caution: LSP server sent invalid character position %s. Using 0 instead."
+                     col)
+            (setq col 0))
+          (codeql--eglot-move-to-lsp-abiding-column col)))
+      (if marker (copy-marker (point-marker)) (point)))))
+
+;; END LICENSING: https://github.com/joaotavora/eglot/blob/master/LICENSE
+
+;; Helper functions to deal with tramp contexts
 
 (defun codeql--tramp-wrap (file)
   "Wrap a tramp prefix onto file if in a remote context (if needed)."
@@ -406,7 +517,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
       (file-exists-p (codeql--tramp-wrap file))
     (file-exists-p (codeql--tramp-unwrap file))))
 
-;; init our storage locations
 (defun codeql--init-state-dirs ()
   "Create our various storage directories if they do not exist yet."
   (mapcar (lambda (path)
@@ -416,7 +526,7 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
                 codeql-results-dir
                 codeql-tmp-dir)))
 
-;;; request and notification handling
+;;; Request and notification handling
 
 (cl-defgeneric codeql--query-server-handle-request (server method &rest params)
   "Handle SERVER's METHOD request with PARAMS."
@@ -425,8 +535,6 @@ https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql
 (cl-defgeneric codeql--query-server-handle-notification (server method &rest params)
   "Handle SERVER's METHOD notification with PARAMS."
   (message "handle notification"))
-
-;; specialize the handlers here
 
 (cl-defmethod codeql--query-server-handle-notification
   (server (method (eql ql/progressUpdated)) &rest params)
@@ -507,6 +615,9 @@ We use this to provide backwards references into the AST buffer from the source 
 
 ;;; buffer-local state tracking variables and functions
 
+;; query server config state
+(defvar-local codeql--path-problem-max-paths 10)
+
 ;; local connection state
 (defvar-local codeql--query-server nil
   "CodeQL query server rpc connection.")
@@ -577,7 +688,6 @@ We use this to provide backwards references into the AST buffer from the source 
 
 ;;; utility functions for running queries
 
-;; XXX: executes command synchronously, so if something gets stuck, it's blocking for emacs, move to async logic
 (defun codeql--shell-command-to-string (cmd &optional verbose keep-stdout)
   "A shell command to string that gives us explicit control over stdout and stderr."
   (when (or verbose codeql-verbose-commands)
@@ -631,7 +741,7 @@ We use this to provide backwards references into the AST buffer from the source 
   (and codeql--library-path codeql--dbscheme))
 
 (defun codeql--database-info (database-path)
-  "Resolve info for DATABASE-PATH."
+  "Resolve info for database at DATABASE-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let* ((cmd (format "%s resolve database -v --log-to-stderr --format=json -- %s"
                       codeql--cli-buffer-local (codeql--tramp-unwrap database-path)))
@@ -702,8 +812,6 @@ We use this to provide backwards references into the AST buffer from the source 
                (format "gh %s" cmd) cmd))
       (with-temp-buffer (insert-file-contents json-file) (buffer-string)))))
 
-(defvar-local codeql--path-problem-max-paths 10)
-
 (defun codeql--bqrs-to-sarif (bqrs-path id kind &optional max-paths)
   (cl-assert (and id kind) t)
   (let* ((sarif-file (concat bqrs-path ".sarif"))
@@ -770,149 +878,7 @@ We use this to provide backwards references into the AST buffer from the source 
     (when (and (codeql--file-exists-p true-root)
                (codeql--shell-command-to-string (format "%s %s" mountpoint true-root))
                (codeql--shell-command-to-string (format "%s %s" umount true-root)))
-      (message "Umounted fuse mount for source archive."))))
-
-;;; transient ui for buffer-local server state management
-
-(transient-define-argument codeql-transient-query-server:--threads ()
-  "Use this many threads to evaluate queries."
-  :description "threads"
-  :class 'transient-option
-  :shortarg "t"
-  :argument "--threads=")
-
-(transient-define-argument codeql-transient-query-server:--max-disk-cache ()
-  :description "disk cache"
-  :class 'transient-option
-  :shortarg "c"
-  :argument "--max-disk-cache=")
-
-(transient-define-argument codeql-transient-query-server:--logdir ()
-  :description "log dir"
-  :class 'transient-option
-  :shortarg "d"
-  :argument "--logdir=")
-
-(transient-define-argument codeql-transient-query-server:--verbose ()
-  :description "verbosity"
-  :class 'transient-switches
-  :key "v"
-  :argument-format "--%s"
-  :argument-regexp "\\(--\\(quiet\\|verbose\\)\\)"
-  :choices '("quiet" "verbose"))
-
-(defun codeql--query-server-resolve-ram (&optional max-ram)
-  "Resolve ram options for jvm, optionally bounding to MAX-RAM in MB."
-  (let* ((max-ram (if max-ram (format "-M=%s" max-ram) ""))
-         (cmd (format "%s resolve ram %s --" codeql--cli-buffer-local max-ram))
-         (options (codeql--shell-command-to-string
-                   (if codeql--use-gh-cli
-                       (format "gh %s" cmd) cmd))))
-    (when options
-      ;; errr ... it's late
-      (split-string (string-trim-right options) "\n"))))
-
-;; workaround from eglot.el, disable line buffering if in remote context
-(defun codeql--query-server-cmd (contact)
-  "Helper for codeql query server connection."
-  (if (file-remote-p default-directory)
-      (list "sh" "-c"
-            (string-join (cons "stty raw > /dev/null;"
-                               (mapcar #'shell-quote-argument contact))
-                         " "))
-    contact))
-
-(transient-define-suffix codeql-transient-query-server-start ()
-  "Start a CodeQL query server."
-  :description "start"
-  :transient nil
-  (interactive)
-  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (if codeql--query-server
-      (message "There is already a query server running")
-    (let* ((ram-options (codeql--query-server-resolve-ram codeql--query-server-max-ram))
-           (args (append
-                  (transient-args transient-current-command)
-                  ram-options
-                  ;; non-user arguments go here
-                  '("--require-db-registration"))))
-      (cl-assert ram-options t)
-      ;; spawn the server process
-      (let* ((name (format "CODEQL Query Server (%s%s -> %s)"
-                           ;; add remote prefix if its there to dedicate event buffer
-                           (or (file-remote-p default-directory) "")
-                           ;; show query file name for this server if available
-                           (file-name-base (directory-file-name default-directory))
-                           (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
-             (cmd (append
-                   (when codeql--use-gh-cli '("gh"))
-                   (list codeql--cli-buffer-local "execute" "query-server")
-                   args)))
-        (message "Starting query server.")
-        ;; manage these buffer local
-        (setq codeql--query-server
-              (make-instance
-               'jsonrpc-process-connection
-               :process
-               ;; spawn in the remote context if need be
-               (let* ((default-directory default-directory)
-                      (cmd (codeql--query-server-cmd cmd)))
-                 (message "Starting query server with: %s" cmd)
-                 (make-process
-                  :name name
-                  :command cmd
-                  :connection-type 'pipe
-                  :coding 'utf-8-emacs-unix
-                  :noquery t
-                  :stderr (get-buffer-create (format "*%s stderr*" name))
-                  ;; enable tramp contexts
-                  :file-handler t))
-               :name name
-               :events-buffer-scrollback-size codeql-query-server-events-buffer-size
-               :notification-dispatcher #'codeql--query-server-handle-notification
-               :request-dispatcher #'codeql--query-server-handle-request
-               :on-shutdown
-               (lexical-let ((buffer-context (current-buffer)))
-                 (lambda (obj)
-                   (codeql--query-server-on-shutdown obj buffer-context)))))
-        (message "Started query server.")))))
-
-(transient-define-suffix codeql-transient-query-server-stop ()
-  "Stop a CodeQL query server."
-  :description "stop"
-  :transient nil
-  (interactive)
-  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (if (not codeql--query-server)
-      (message "No active query server found.")
-    (jsonrpc-shutdown codeql--query-server)))
-
-(transient-define-prefix codeql-transient-query-server-init-start ()
-  "Start a CodeQL query server."
-  :value (list "--threads=0" "--quiet" "--log-to-stderr")
-  :incompatible '(("--logdir=" "--log-to-stderr"))
-  [:class transient-columns
-          ["Options"
-           (codeql-transient-query-server:--threads)
-           (codeql-transient-query-server:--verbose)
-           (codeql-transient-query-server:--logdir)
-           ("e" "log stderr" "--log-to-stderr")
-           (codeql-transient-query-server:--max-disk-cache)]
-          ["Server"
-           ("s" codeql-transient-query-server-start)]]
-  ;; only make this transient available inside ql mode
-  (interactive)
-  (when (eq major-mode 'ql-tree-sitter-mode)
-    (transient-setup 'codeql-transient-query-server-init)))
-
-(transient-define-prefix codeql-transient-query-server-init ()
-  "Start|Stop a CodeQL query server, pending on buffer-local state."
-  (interactive)
-  (when (eq major-mode 'ql-tree-sitter-mode)
-    (if codeql--query-server
-        ;; just go straight to stopping the server in this case
-        (codeql-transient-query-server-stop)
-      (transient-setup 'codeql-transient-query-server-init-start))))
+      (message "Umounted %s" true-root))))
 
 ;;; jsonrpc interactions with the buffer-local query server
 
@@ -1015,7 +981,7 @@ We use this to provide backwards references into the AST buffer from the source 
        ))))
 
 (defun codeql-query-server-deregister-database (database-dataset-folder)
-  "Deregister DATABASE with the query server."
+  "Deregister database associated to DATABASE-DATASET-FOLDER."
   (message "Deregistering: %s" database-dataset-folder)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   ;; we need global removal to be synchronous, so just pull the entry here
@@ -1051,32 +1017,14 @@ We use this to provide backwards references into the AST buffer from the source 
         codeql--active-database))
     "(no active db)"))
 
-(defvar codeql-run-query-always-save t
-  "Whether you always want to save prior to query evaluation.
-
-Evaluation requires a synced position in the query file on disk, such that the
-query server can grab the right contents.
-
-This applies to both normal evaluation and quick evaluation.")
-
-;;; deal with utf-16 code points for column calculations, modified from eglot
-(defun codeql-lsp-abiding-column ()
-  "Calculate current COLUMN as defined by the LSP spec."
-  ;; codeql query server uses 1-based column values and utf-16 code points
-  (/ (length
-      (encode-coding-region
-       (line-beginning-position)
-       (min (point) (point-max)) 'utf-16 t))
-     2))
-
 ;; XXX: this feels a little crummy still, revisit
 (defun codeql--uri-to-filename (uri)
+  "Turn URI into a file system location."
   (cl-assert (stringp uri) t)
   (let ((template "%%SRCROOT%%")
         (resolved-path uri))
     ;; do any source prefixing required based on global db info
     (when (string-match template uri)
-      ;;(message "XXX: uri transform on: %s" uri)
       (setq resolved-path (replace-regexp-in-string
                            template
                            (or codeql--database-source-location-prefix "")
@@ -1304,7 +1252,9 @@ This applies to both normal evaluation and quick evaluation.")
 (defun codeql--org-render-sarif-results (org-data &optional footer marker)
   "Render ORG-DATA including an optional FOOTER."
   ;; sarif results are org trees
-  (let ((buffer (generate-new-buffer (format "* codeql-org-results:%s *" (if marker marker "")))))
+  (let ((buffer
+         (generate-new-buffer
+          (format "* codeql-org-results:%s *" (if marker marker "")))))
     (with-current-buffer buffer
       (insert org-data)
       (org-mode)
@@ -1321,7 +1271,9 @@ This applies to both normal evaluation and quick evaluation.")
 (defun codeql--org-render-raw-query-results (org-data &optional footer marker)
   "Render ORG-DATA including an optional FOOTER."
   ;; raw results are org tables
-  (let ((buffer (generate-new-buffer (format "* codeql-org-results:%s *" (if marker marker "")))))
+  (let ((buffer
+         (generate-new-buffer
+          (format "* codeql-org-results:%s *" (if marker marker "")))))
     (with-current-buffer buffer
       (insert org-data)
       (org-mode)
@@ -1471,8 +1423,14 @@ This applies to both normal evaluation and quick evaluation.")
                       (:values
                        (:tuples
                         [(:stringValue
-                          ,(codeql--archive-path-from-org-filename (codeql--tramp-unwrap src-filename)))])))))
-               (codeql--query-server-run-query-from-path full-path nil template-values src-filename src-buffer))
+                          ,(codeql--archive-path-from-org-filename
+                            (codeql--tramp-unwrap src-filename)))])))))
+               (codeql--query-server-run-query-from-path
+                full-path
+                nil
+                template-values
+                src-filename
+                src-buffer))
              ;; respect search precedence and only return from first find
              (cl-return)
              ;; if we did not return, that means we weren't able to find the thing.
@@ -1494,62 +1452,6 @@ This applies to both normal evaluation and quick evaluation.")
 
 (defvar-local codeql--ast-overlay nil)
 (defvar-local codeql--src-overlay nil)
-
-;; eglot code: https://github.com/joaotavora/eglot/blob/master/LICENSE
-
-;; note: this isn't the same as codeql-lsp-abiding column which operates on 1 based assumptions!
-(defun codeql--eglot-lsp-abiding-column (&optional lbp)
-  "Calculate current COLUMN as defined by the LSP spec.
-LBP defaults to `line-beginning-position'."
-  (/   (- (length (encode-coding-region (or lbp (line-beginning-position))
-                                        ;; Fix github#860
-                                        (min (point) (point-max)) 'utf-16 t))
-          2)
-       2))
-
-(cl-defmacro codeql--eglot--widening (&rest body)
-  "Save excursion and restriction.  Widen.  Then run BODY." (declare (debug t))
-  `(save-excursion (save-restriction (widen) ,@body)))
-
-(defun codeql--eglot-move-to-lsp-abiding-column (column)
-  "Move to COLUMN abiding by the LSP spec."
-  (save-restriction
-    (cl-loop
-     with lbp = (line-beginning-position)
-     initially
-     (narrow-to-region lbp (line-end-position))
-     (move-to-column column)
-     for diff = (- column
-                   (codeql--eglot-lsp-abiding-column lbp))
-     until (zerop diff)
-     do (condition-case eob-err
-            (forward-char (/ (if (> diff 0) (1+ diff) (1- diff)) 2))
-          (end-of-buffer (cl-return eob-err))))))
-
-(defun codeql--eglot--lsp-position-to-point (pos-plist &optional marker)
-  "Convert LSP position POS-PLIST to Emacs point.
-If optional MARKER, return a marker instead"
-  (save-excursion
-    (save-restriction
-      (widen)
-      (goto-char (point-min))
-      (forward-line (min most-positive-fixnum
-                         (plist-get pos-plist :line)))
-      (unless (eobp) ;; if line was excessive leave point at eob
-        (let ((tab-width 1)
-              (col (plist-get pos-plist :character)))
-          (unless (wholenump col)
-            (message "Caution: LSP server sent invalid character position %s. Using 0 instead."
-                     col)
-            (setq col 0))
-          (codeql--eglot-move-to-lsp-abiding-column col)))
-      (if marker (copy-marker (point-marker)) (point)))))
-
-;; end of: https://github.com/joaotavora/eglot/blob/master/LICENSE
-
-;; XXX: this is way too resource intensive still, make a vector index based lookup cache
-;; XXX: something like, every line n can index into something that returns any potential
-;; XXX: match for that line n ... so we don't walk that entire vector every time
 
 ;; not the fastest, but makes life easier for now
 (defvar-local codeql--ast-lookup-cache nil)
@@ -1790,14 +1692,13 @@ a codeql database source archive."
                for src-end-column = (json-pointer-get src "/url/endColumn")
                for filename = (format "%s%s" src-root (codeql--uri-to-filename (json-pointer-get dst "/url/uri")))
                for dst-line = (json-pointer-get dst "/url/startLine")
-               ;; XXX: need to go from utf-16 column value to visual column value
                for dst-column = (json-pointer-get dst "/url/startColumn")
                for dst-desc = (json-pointer-get dst "/label")
                when
                ;; columns in emacs are 0-based, columns in codeql are 1 based
                ;; columns in codeql are utf-16 code points, not visual column
                (let ((point-line (line-number-at-pos))
-                     (point-column (codeql-lsp-abiding-column)))
+                     (point-column (codeql--lsp-abiding-column)))
                  (and (eql src-start-line point-line)
                       (>= point-column src-start-column)
                       (<= point-column src-end-column)))
@@ -1818,20 +1719,21 @@ a codeql database source archive."
                for dst-end-column = (json-pointer-get dst "/url/endColumn")
                for filename = (format "%s%s" src-root (codeql--uri-to-filename (json-pointer-get src "/url/uri")))
                for src-line = (json-pointer-get src "/url/startLine")
-               ;; XXX: need to go from utf-16 column value to visual column value
                for src-column = (json-pointer-get src "/url/startColumn")
                for src-desc = (json-pointer-get src "/label")
                when
                ;; columns in emacs are 0-based, columns in codeql are 1 based
                ;; columns in codeql are utf-16 code points, not visual column
                (let ((point-line (line-number-at-pos))
-                     (point-column (codeql-lsp-abiding-column)))
+                     (point-column (codeql--lsp-abiding-column)))
                  (and (eql dst-start-line point-line)
                       (>= point-column dst-start-column)
                       (<= point-column dst-end-column)))
                ;; if point is at a def that we know about, collect the ref
                collect
-               (xref-make src-desc (xref-make-file-location (codeql--tramp-wrap filename) src-line (1- src-column)))))))
+               (xref-make
+                src-desc
+                (xref-make-file-location (codeql--tramp-wrap filename) src-line (1- src-column)))))))
 
 ;; XXX: TODO
 (cl-defmethod xref-backend-apropos ((_backend (eql codeql)) symbol)
@@ -2049,11 +1951,7 @@ Our implementation simply returns the thing at point as a candidate."
                       ;; line == 0 means no location available
                       (line (and (> (codeql--result-node-line result-node) 0)
                                  (codeql--result-node-line result-node))))
-
-                ;; XXX: doing this as part of the render isn't ideal perf wise
-
                 (progn
-
                   ;; init ast reference cache if need be
                   (let* ((src-filename (codeql--result-node-filename result-node))
                          ;; XXX: double check under TRAMP
@@ -2065,7 +1963,6 @@ Our implementation simply returns the thing at point as a candidate."
                                              src-filename))))))
                     (unless (gethash full-src-path codeql--ast-backwards-definitions)
                       (puthash full-src-path [] codeql--ast-backwards-definitions)))
-
                   ;; there's backwards messages in this stuff
                   (let* ((src-filename (codeql--result-node-filename result-node))
                          (full-src-path
@@ -2083,7 +1980,13 @@ Our implementation simply returns the thing at point as a candidate."
                          (src-end-column (json-pointer-get entity-url "/endColumn")))
                     ;; make all the info we need to build an AST definition available from our xref backend
                     (puthash full-src-path
-                             (vconcat `[,(vector src-start-line src-end-line src-start-column src-end-column ast-line)] ast-lookup-vector)
+                             (vconcat `[,(vector
+                                          src-start-line
+                                          src-end-line
+                                          src-start-column
+                                          src-end-column
+                                          ast-line)]
+                                      ast-lookup-vector)
                              codeql--ast-backwards-definitions))
 
                   ;; go into the active query buffer context and resolve from database
@@ -2378,6 +2281,7 @@ Our implementation simply returns the thing at point as a candidate."
                 (let ((rendered (codeql--org-render-raw-query-results org-data footer (file-name-nondirectory query-path))))
                   (with-temp-file (format "%s.org" bqrs-path) (insert rendered))))))))))))
 
+;; XXX: too many args, move to a struct
 (defun codeql--query-server-request-run (buffer-context qlo-path bqrs-path query-path query-info db-path quick-eval &optional template-values src-filename src-buffer)
   "Request a query evaluation from the query server."
   (with-current-buffer buffer-context
@@ -2451,7 +2355,7 @@ Our implementation simply returns the thing at point as a candidate."
          (message "Error %s: %s %s" code message _data))
        :deferred :evaluation/runQueries))))
 
-;; XXX: too many args, move all of those to passing a struct around instead
+;; XXX: too many args, move to a struct
 (defun codeql--query-server-request-compile-and-run (buffer-context library-path qlo-path bqrs-path query-path query-info db-path db-scheme quick-eval &optional template-values src-filename src-buffer)
   "Request query compilation from the query server."
 
@@ -2466,8 +2370,8 @@ Our implementation simply returns the thing at point as a candidate."
                 ;; positions in CodeQL are 1-based
                 (let ((start-line (line-number-at-pos min))
                       (end-line (line-number-at-pos max))
-                      (start-col (save-excursion (goto-char min) (codeql-lsp-abiding-column)))
-                      (end-col (save-excursion (goto-char max) (codeql-lsp-abiding-column))))
+                      (start-col (save-excursion (goto-char min) (codeql--lsp-abiding-column)))
+                      (end-col (save-excursion (goto-char max) (codeql--lsp-abiding-column))))
                   `(:quickEval
                     (:quickEvalPos
                      (:fileName ,(codeql--tramp-unwrap query-path)
@@ -2587,7 +2491,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
              (quick-eval (if (use-region-p) t nil)))
 
         ;; make sure we save the query before running it
-        (when (or codeql-run-query-always-save
+        (when (or codeql--run-query-always-save
                   (and (buffer-modified-p)
                        (y-or-n-p "Query was not saved prior to evaluation, save now?")))
           (save-buffer))
@@ -2646,10 +2550,151 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
         (when db
           (let ((database-path (gethash db codeql--registered-database-history)))
             (codeql-query-server-register-database database-path))))
-    ;; XXX: do we want to serialize database history state to disk?
     (message "No database history available across any sessions.")))
 
-;;; transient ui for interacting with the buffer-local query server
+;;; transient ui for buffer-local server state management
+
+(transient-define-argument codeql-transient-query-server:--threads ()
+  "Use this many threads to evaluate queries."
+  :description "threads"
+  :class 'transient-option
+  :shortarg "t"
+  :argument "--threads=")
+
+(transient-define-argument codeql-transient-query-server:--max-disk-cache ()
+  :description "disk cache"
+  :class 'transient-option
+  :shortarg "c"
+  :argument "--max-disk-cache=")
+
+(transient-define-argument codeql-transient-query-server:--logdir ()
+  :description "log dir"
+  :class 'transient-option
+  :shortarg "d"
+  :argument "--logdir=")
+
+(transient-define-argument codeql-transient-query-server:--verbose ()
+  :description "verbosity"
+  :class 'transient-switches
+  :key "v"
+  :argument-format "--%s"
+  :argument-regexp "\\(--\\(quiet\\|verbose\\)\\)"
+  :choices '("quiet" "verbose"))
+
+;; helpers for the query server transient
+
+(defun codeql--query-server-resolve-ram (&optional max-ram)
+  "Resolve ram options for jvm, optionally bounding to MAX-RAM in MB."
+  (let* ((max-ram (if max-ram (format "-M=%s" max-ram) ""))
+         (cmd (format "%s resolve ram %s --" codeql--cli-buffer-local max-ram))
+         (options (codeql--shell-command-to-string
+                   (if codeql--use-gh-cli
+                       (format "gh %s" cmd) cmd))))
+    (when options
+      ;; errr ... it's late
+      (split-string (string-trim-right options) "\n"))))
+
+;; workaround from eglot.el, disable line buffering if in remote context
+(defun codeql--query-server-cmd (contact)
+  "Helper for codeql query server connection."
+  (if (file-remote-p default-directory)
+      (list "sh" "-c"
+            (string-join (cons "stty raw > /dev/null;"
+                               (mapcar #'shell-quote-argument contact))
+                         " "))
+    contact))
+
+(transient-define-suffix codeql-transient-query-server-start ()
+  "Start a CodeQL query server."
+  :description "start"
+  :transient nil
+  (interactive)
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (if codeql--query-server
+      (message "There is already a query server running")
+    (let* ((ram-options (codeql--query-server-resolve-ram codeql--query-server-max-ram))
+           (args (append
+                  (transient-args transient-current-command)
+                  ram-options
+                  ;; non-user arguments go here
+                  '("--require-db-registration"))))
+      (cl-assert ram-options t)
+      ;; spawn the server process
+      (let* ((name (format "CODEQL Query Server (%s%s -> %s)"
+                           ;; add remote prefix if its there to dedicate event buffer
+                           (or (file-remote-p default-directory) "")
+                           ;; show query file name for this server if available
+                           (file-name-base (directory-file-name default-directory))
+                           (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
+             (cmd (append
+                   (when codeql--use-gh-cli '("gh"))
+                   (list codeql--cli-buffer-local "execute" "query-server")
+                   args)))
+        (message "Starting query server.")
+        ;; manage these buffer local
+        (setq codeql--query-server
+              (make-instance
+               'jsonrpc-process-connection
+               :process
+               ;; spawn in the remote context if need be
+               (let* ((default-directory default-directory)
+                      (cmd (codeql--query-server-cmd cmd)))
+                 (message "Starting query server with: %s" cmd)
+                 (make-process
+                  :name name
+                  :command cmd
+                  :connection-type 'pipe
+                  :coding 'utf-8-emacs-unix
+                  :noquery t
+                  :stderr (get-buffer-create (format "*%s stderr*" name))
+                  ;; enable tramp contexts
+                  :file-handler t))
+               :name name
+               :events-buffer-scrollback-size codeql-query-server-events-buffer-size
+               :notification-dispatcher #'codeql--query-server-handle-notification
+               :request-dispatcher #'codeql--query-server-handle-request
+               :on-shutdown
+               (lexical-let ((buffer-context (current-buffer)))
+                 (lambda (obj)
+                   (codeql--query-server-on-shutdown obj buffer-context)))))
+        (message "Started query server.")))))
+
+(transient-define-suffix codeql-transient-query-server-stop ()
+  "Stop a CodeQL query server."
+  :description "stop"
+  :transient nil
+  (interactive)
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (if (not codeql--query-server)
+      (message "No active query server found.")
+    (jsonrpc-shutdown codeql--query-server)))
+
+(transient-define-prefix codeql-transient-query-server-init-start ()
+  "Start a CodeQL query server."
+  :value (list "--threads=0" "--quiet" "--log-to-stderr")
+  :incompatible '(("--logdir=" "--log-to-stderr"))
+  [:class transient-columns
+          ["Options"
+           (codeql-transient-query-server:--threads)
+           (codeql-transient-query-server:--verbose)
+           (codeql-transient-query-server:--logdir)
+           ("e" "log stderr" "--log-to-stderr")
+           (codeql-transient-query-server:--max-disk-cache)]
+          ["Server"
+           ("s" codeql-transient-query-server-start)]]
+  ;; only make this transient available inside ql mode
+  (interactive)
+  (when (eq major-mode 'ql-tree-sitter-mode)
+    (transient-setup 'codeql-transient-query-server-init)))
+
+(transient-define-prefix codeql-transient-query-server-init ()
+  "Start|Stop a CodeQL query server, pending on buffer-local state."
+  (interactive)
+  (when (eq major-mode 'ql-tree-sitter-mode)
+    (if codeql--query-server
+        ;; just go straight to stopping the server in this case
+        (codeql-transient-query-server-stop)
+      (transient-setup 'codeql-transient-query-server-init-start))))
 
 (defun codeql-set-max-paths (max-paths)
   "Configure the buffer-local value for path problem max paths."
