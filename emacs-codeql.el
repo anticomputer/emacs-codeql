@@ -138,7 +138,7 @@
   :group 'emacs-codeql)
 
 (defcustom codeql-transient-binding "C-c C-d"
-  "The keybinding to start the emacs-codeql transient ui inside ql-tree-sitter-mode."
+  "The keybinding to start the emacs-codeql transient UI."
   :type 'key-sequence
   :group 'emacs-codeql)
 
@@ -227,7 +227,9 @@ query server can grab the right contents.
 This applies to both normal evaluation and quick evaluation.")
 
 (defvar codeql--query-server-max-ram nil
-  "The max amount of RAM to use for query server evaluations, leave nil for default.")
+  "The max amount of RAM to use for query server evaluations.
+
+Leave nil for default.")
 
 ;; we use buffer-local copies of these so we can play context dependent tricks
 (defvar-local codeql--cli-buffer-local nil)
@@ -294,7 +296,7 @@ This applies to both normal evaluation and quick evaluation.")
 
 ;; Eglot configuration
 
-(defun codeql--lang-server-contact (i)
+(defun codeql--lang-server-contact (_i)
   "Return the currently configured LSP server parameters."
 
   (cl-assert codeql--cli-buffer-local t)
@@ -528,24 +530,24 @@ If optional MARKER, return a marker instead"
 
 ;;; Request and notification handling
 
-(cl-defgeneric codeql--query-server-handle-request (server method &rest params)
+(cl-defgeneric codeql--query-server-handle-request (_server method &rest params)
   "Handle SERVER's METHOD request with PARAMS."
   (message "handle request: %s %s" method params))
 
-(cl-defgeneric codeql--query-server-handle-notification (server method &rest params)
+(cl-defgeneric codeql--query-server-handle-notification (_server _method &rest _params)
   "Handle SERVER's METHOD notification with PARAMS."
   (message "handle notification"))
 
 (cl-defmethod codeql--query-server-handle-notification
-  (server (method (eql ql/progressUpdated)) &rest params)
+  (_server (method (eql ql/progressUpdated)) &rest params)
   "Handle SERVER's ql/progressUpdated notification with PARAMS."
   ;;(message "%s %s" method params)
   (cl-destructuring-bind ((&key step maxStep message &allow-other-keys)) params
     (unless (string= message "")
-      (message "[%s] step %s -> %s" method step message))))
+      (message "[%s] step %s/%s -> %s" method step maxStep message))))
 
 (cl-defmethod codeql--query-server-handle-request
-  (server (method (eql evaluation/queryCompleted)) &rest params)
+  (_server (method (eql evaluation/queryCompleted)) &rest params)
   "Handle SERVER's evaluation/queryCompleted request with PARAMS."
   ;;(message "%s %s" method params)
   (cl-destructuring-bind ((&key resultType queryId evaluationTime message &allow-other-keys)) params
@@ -580,9 +582,9 @@ If optional MARKER, return a marker instead"
 (defvar codeql--ast-cache (make-hash-table :test #'equal))
 
 (defvar codeql--ast-backwards-definitions (make-hash-table :test #'equal)
-  "A hash table of src-filename -> hash table { AST buffer line : source file location }.
+  "A hash table of src-filename -> ast-table.
 
-We use this to provide backwards references into the AST buffer from the source file.")
+Provides backwards references into the AST buffer from the source file.")
 
 (defun codeql-clear-refs-defs-ast-cache ()
   "Clear global refs/defs/ast caches in case you need a clean slate."
@@ -655,7 +657,7 @@ We use this to provide backwards references into the AST buffer from the source 
 ;; local query history
 (defvar-local codeql--completed-query-history nil)
 
-(defun codeql--query-server-on-shutdown (obj buffer-context)
+(defun codeql--query-server-on-shutdown (_obj buffer-context)
   ;; remove any active database from global database state
   (when codeql--database-dataset-folder
     (codeql--active-datasets-del codeql--database-dataset-folder))
@@ -695,7 +697,7 @@ We use this to provide backwards references into the AST buffer from the source 
   (condition-case nil
       (with-temp-buffer
         (let* ((cmd (if codeql--use-gh-cli (format "gh %s" cmd) cmd))
-               (stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
+               ;;(stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
                (stdout-buffer (generate-new-buffer (format "* stdout: %s *" cmd)))
                ;; process-file will work in remote context pending default-directory
                (exit-code
@@ -883,16 +885,16 @@ We use this to provide backwards references into the AST buffer from the source 
 ;;; jsonrpc interactions with the buffer-local query server
 
 (cl-defmethod jsonrpc-connection-ready-p
-  (server (method (eql :evaluation/registerDatabases)))
+  (_server (_method (eql :evaluation/registerDatabases)))
   "Provide synchronization for register/unregister."
   ;; wait until any buffer local deregistration has completed
   (if codeql--active-database
       nil
     t))
 
-(defun codeql-query-server-register-database (&optional database-path)
+(defun codeql-query-server-register-database (database-path)
   "Register a database with the query server."
-  (interactive)
+  (interactive (read-file-name "Database: " nil default-directory t))
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
 
   ;; if no server is running yet, offer to start one
@@ -908,77 +910,71 @@ We use this to provide backwards references into the AST buffer from the source 
   (unless codeql--active-source-roots-with-buffers
     (setq codeql--active-source-roots-with-buffers (make-hash-table :test #'equal)))
 
-  (let ((database-path
-         (or database-path
-             ;; note that this doesn't return plain strings in remote context
-             ;; but rather a tramp file object ...
-             (read-file-name "Database: " nil default-directory t))))
+  ;; resolve and set the dataset folder, we need this when running queries
+  (let* ((database-info (codeql--database-info database-path))
+         (database-language (json-pointer-get database-info "/languages/0"))
+         (source-location-prefix (json-pointer-get database-info "/sourceLocationPrefix"))
+         (source-archive-zip (json-pointer-get database-info "/sourceArchiveZip"))
+         (source-archive-root (json-pointer-get database-info "/sourceArchiveRoot"))
+         (database-dataset-folder (json-pointer-get database-info "/datasetFolder")))
 
-    ;; resolve and set the dataset folder, we need this when running queries
-    (let* ((database-info (codeql--database-info database-path))
-           (database-language (json-pointer-get database-info "/languages/0"))
-           (source-location-prefix (json-pointer-get database-info "/sourceLocationPrefix"))
-           (source-archive-zip (json-pointer-get database-info "/sourceArchiveZip"))
-           (source-archive-root (json-pointer-get database-info "/sourceArchiveRoot"))
-           (database-dataset-folder (json-pointer-get database-info "/datasetFolder")))
+    (cl-assert codeql--query-server t)
+    (cl-assert database-dataset-folder t)
 
-      (cl-assert codeql--query-server t)
-      (cl-assert database-dataset-folder t)
+    ;; perform any local deregistration first
+    (when (and codeql--active-database codeql--database-dataset-folder)
+      (codeql-query-server-deregister-database codeql--database-dataset-folder))
 
-      ;; perform any local deregistration first
-      (when (and codeql--active-database codeql--database-dataset-folder)
-        (codeql-query-server-deregister-database codeql--database-dataset-folder))
+    ;; check that target dataset is not registered in a different session
+    (when-let ((buffer (codeql--active-datasets-get database-dataset-folder)))
+      (message "Database is registered in other session! Deregistering there.")
+      ;; check if we need to do remote deregister
+      (with-current-buffer buffer
+        (when (and codeql--active-database codeql--database-dataset-folder)
+          (codeql-query-server-deregister-database codeql--database-dataset-folder))))
 
-      ;; check that target dataset is not registered in a different session
-      (when-let ((buffer (codeql--active-datasets-get database-dataset-folder)))
-        (message "Database is registered in other session! Deregistering there.")
-        ;; check if we need to do remote deregister
-        (with-current-buffer buffer
-          (when (and codeql--active-database codeql--database-dataset-folder)
-            (codeql-query-server-deregister-database codeql--database-dataset-folder))))
-
-      (message "Registering: %s" database-dataset-folder)
-      (jsonrpc-async-request
-       (codeql--query-server-current-or-error)
-       :evaluation/registerDatabases
-       `(:body
-         (:databases
-          [(:dbDir ,database-dataset-folder :workingSet "default")])
-         :progressId ,(codeql--query-server-next-progress-id))
-       :success-fn
-       (lexical-let ((buffer (current-buffer))
-                     (database-language database-language)
-                     (database-path database-path)
-                     (database-dataset-folder database-dataset-folder)
-                     (source-location-prefix source-location-prefix)
-                     (source-archive-root source-archive-root)
-                     (source-archive-zip source-archive-zip))
-         (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
-           ;;(message "Success: %s" registeredDatabases)
-           (with-current-buffer buffer
-             ;; global addition can be asynchronous, so we do that on success only
-             (codeql--active-datasets-add database-dataset-folder (current-buffer))
-             ;; associate the source root with the query buffer globally for xref support
-             (puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
-             ;; save in database selection history
-             (puthash database-path database-path codeql--registered-database-history)
-             ;; these variables are buffer-local to ql-tree-sitter-mode
-             (setq codeql--active-database database-path)
-             (setq codeql--active-database-language database-language)
-             (setq codeql--database-dataset-folder database-dataset-folder)
-             (setq codeql--database-source-location-prefix source-location-prefix)
-             (setq codeql--database-source-archive-root source-archive-root)
-             (setq codeql--database-source-archive-zip source-archive-zip)
-             (message "Registered: %s" database-dataset-folder)
-             ;; might change codeql--active-database semantics at some point
-             ;; so use the database path value we _KNOW_ is legit
-             (codeql--database-extract-source-archive-zip database-path))))
-       :error-fn
-       (jsonrpc-lambda (&key code message _data &allow-other-keys)
-         (message "Error %s: %s %s" code message _data))
-       ;; synchronize to only register when deregister has completed in global state
-       :deferred :evaluation/registerDatabases
-       ))))
+    (message "Registering: %s" database-dataset-folder)
+    (jsonrpc-async-request
+     (codeql--query-server-current-or-error)
+     :evaluation/registerDatabases
+     `(:body
+       (:databases
+        [(:dbDir ,database-dataset-folder :workingSet "default")])
+       :progressId ,(codeql--query-server-next-progress-id))
+     :success-fn
+     (lexical-let ((buffer (current-buffer))
+                   (database-language database-language)
+                   (database-path database-path)
+                   (database-dataset-folder database-dataset-folder)
+                   (source-location-prefix source-location-prefix)
+                   (source-archive-root source-archive-root)
+                   (source-archive-zip source-archive-zip))
+       (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
+         ;;(message "Success: %s" registeredDatabases)
+         (with-current-buffer buffer
+           ;; global addition can be asynchronous, so we do that on success only
+           (codeql--active-datasets-add database-dataset-folder (current-buffer))
+           ;; associate the source root with the query buffer globally for xref support
+           (puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
+           ;; save in database selection history
+           (puthash database-path database-path codeql--registered-database-history)
+           ;; these variables are buffer-local to ql-tree-sitter-mode
+           (setq codeql--active-database database-path)
+           (setq codeql--active-database-language database-language)
+           (setq codeql--database-dataset-folder database-dataset-folder)
+           (setq codeql--database-source-location-prefix source-location-prefix)
+           (setq codeql--database-source-archive-root source-archive-root)
+           (setq codeql--database-source-archive-zip source-archive-zip)
+           (message "Registered: %s" database-dataset-folder)
+           ;; might change codeql--active-database semantics at some point
+           ;; so use the database path value we _KNOW_ is legit
+           (codeql--database-extract-source-archive-zip database-path))))
+     :error-fn
+     (jsonrpc-lambda (&key code message data &allow-other-keys)
+       (message "Error %s: %s %s" code message data))
+     ;; synchronize to only register when deregister has completed in global state
+     :deferred :evaluation/registerDatabases
+     )))
 
 (defun codeql-query-server-deregister-database (database-dataset-folder)
   "Deregister database associated to DATABASE-DATASET-FOLDER."
@@ -1003,8 +999,8 @@ We use this to provide backwards references into the AST buffer from the source 
          (codeql--reset-database-state)
          (message "Deregistered: %s" database-dataset-folder))))
    :error-fn
-   (jsonrpc-lambda (&key code message _data &allow-other-keys)
-     (message "Error %s: %s %s" code message _data))
+   (jsonrpc-lambda (&key code message data &allow-other-keys)
+     (message "Error %s: %s %s" code message data))
    :deferred :evaluation/deregisterDatabases
    ))
 
@@ -1111,7 +1107,9 @@ We use this to provide backwards references into the AST buffer from the source 
     (format "%s" (codeql--result-node-label node))))
 
 (defun codeql--org-list-from-nodes (parent-buffer nodes &optional header)
-  "Turn a given list of PARENT-BUFFER context location NODES into an org-list, setting an optional HEADER."
+  "Turn a given list of PARENT-BUFFER context location NODES into an org-list.
+
+Sets an optional HEADER."
   (with-temp-buffer
     (when header
       (insert header))
@@ -1497,7 +1495,7 @@ We use this to provide backwards references into the AST buffer from the source 
                   (gethash (current-buffer) codeql--src-to-ast-buffer))))))))
 
 (defun codeql--src-point-to-ast-region-highlight (ast-buffer)
-  "Return the closest matching AST match available for the thing at point in src buffer."
+  "Return the closest matching AST match available for the thing at src point."
   (when (and (buffer-live-p ast-buffer)
              ;; only do things if ast-buffer is visible and/or focused
              (or (eq ast-buffer (window-buffer (selected-window)))
@@ -1544,7 +1542,7 @@ We use this to provide backwards references into the AST buffer from the source 
             (pulse-momentary-highlight-one-line (point))))))))
 
 ;; XXX: TODO: placeholder
-(defun codeql--ast-point-to-src-region-highlight (src-buffer))
+(defun codeql--ast-point-to-src-region-highlight (_src-buffer))
 
 ;; post-command hooks that run locally in ast/src buffers
 (defun codeql--sync-src-to-ast-overlay ()
@@ -1655,7 +1653,7 @@ a codeql database source archive."
   (codeql--xref-thing-at-point))
 
 ;; implement a special backend definition just for AST definitions
-(cl-defmethod xref-backend-definitions ((_backend (eql codeql-ast)) symbol)
+(cl-defmethod xref-backend-definitions ((_backend (eql codeql-ast)) _symbol)
   "Show any AST definitions available for the thing at point."
   (if-let ((ast-lookup-vector (gethash (buffer-file-name) codeql--ast-backwards-definitions)))
       (cl-multiple-value-bind (ast-line ast-buffer) (codeql--ast-line-at-src-point ast-lookup-vector t)
@@ -1675,7 +1673,7 @@ a codeql database source archive."
           (error "No AST buffer available! Please M-x codeql-view-ast on the source buffer.")))
     (error "No AST buffer available yet! Please M-x codeql-view-ast on the source buffer.")))
 
-(cl-defmethod xref-backend-definitions ((_backend (eql codeql)) symbol)
+(cl-defmethod xref-backend-definitions ((_backend (eql codeql)) _symbol)
   "Get known definitions for location at point."
   (cl-multiple-value-bind (json src-root) (gethash (buffer-file-name) codeql--definitions-cache)
     ;; re-parsing the json for every definition is terribly inefficient
@@ -1704,7 +1702,7 @@ a codeql database source archive."
                collect
                (xref-make dst-desc (xref-make-file-location (codeql--tramp-wrap filename) dst-line (1- dst-column)))))))
 
-(cl-defmethod xref-backend-references ((_backend (eql codeql)) symbol)
+(cl-defmethod xref-backend-references ((_backend (eql codeql)) _symbol)
   "Get known references for location at point."
   (cl-multiple-value-bind (json src-root) (gethash (buffer-file-name) codeql--references-cache)
     (when (and json src-root)
@@ -1734,7 +1732,7 @@ a codeql database source archive."
                 (xref-make-file-location (codeql--tramp-wrap filename) src-line (1- src-column)))))))
 
 ;; XXX: TODO
-(cl-defmethod xref-backend-apropos ((_backend (eql codeql)) symbol)
+(cl-defmethod xref-backend-apropos ((_backend (eql codeql)) _symbol)
   nil)
 
 (cl-defmethod xref-backend-identifier-completion-table ((_backend (eql codeql)))
@@ -1773,11 +1771,11 @@ Our implementation simply returns the thing at point as a candidate."
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
 
-(defun codeql--process-defs (json src-filename src-root src-buffer)
+(defun codeql--process-defs (json src-filename src-root _src-buffer)
   (puthash src-filename (list json src-root) codeql--definitions-cache)
   (message "Processed definitions for: %s" (file-name-nondirectory src-filename)))
 
-(defun codeql--process-refs (json src-filename src-root src-buffer)
+(defun codeql--process-refs (json src-filename src-root _src-buffer)
   (puthash src-filename (list json src-root) codeql--references-cache)
   (message "Processed references for: %s" (file-name-nondirectory src-filename)))
 
@@ -2074,7 +2072,7 @@ Our implementation simply returns the thing at point as a candidate."
            (or query-id "no-meta"))
 
   (when-let ((bqrs-info (codeql--bqrs-info bqrs-path)))
-    (let ((result-sets (json-pointer-get bqrs-info "/result-sets"))
+    (let ((_result-sets (json-pointer-get bqrs-info "/result-sets"))
           (compatible-query-kinds (json-pointer-get bqrs-info "compatible-query-kinds"))
           (footer
            (concat
@@ -2169,13 +2167,12 @@ Our implementation simply returns the thing at point as a candidate."
            for artifacts = (json-pointer-get run "/artifacts")
            do (message "Rendering results for run %s" run-id)
            ;; check if we have any artifact contents, TODO: do something with 'm?
-           (let ((has-artifact-contents
-                  (cl-loop for artifact across artifacts
-                           for contents = (json-pointer-get artifact "/contents")
-                           when contents
-                           do
-                           (message "Found artifact contents.")
-                           (cl-return t)))))
+           (cl-loop for artifact across artifacts
+                    for contents = (json-pointer-get artifact "/contents")
+                    when contents
+                    do
+                    (message "Found artifact contents.")
+                    (cl-return t))
            ;; alrighty, let's start processing some results into org data
            (when-let ((org-results
                        (cl-loop for result across results
@@ -2356,8 +2353,8 @@ Our implementation simply returns the thing at point as a candidate."
                         src-buffer))))
                (message "No query results in %s!" bqrs-path)))))
        :error-fn
-       (jsonrpc-lambda (&key code message _data &allow-other-keys)
-         (message "Error %s: %s %s" code message _data))
+       (jsonrpc-lambda (&key code message data &allow-other-keys)
+         (message "Error %s: %s %s" code message data))
        :deferred :evaluation/runQueries))))
 
 ;; XXX: too many args, move to a struct
@@ -2452,8 +2449,8 @@ Our implementation simply returns the thing at point as a candidate."
                                                  src-filename
                                                  src-buffer)))))
        :error-fn
-       (jsonrpc-lambda (&key code message _data &allow-other-keys)
-         (message "Error %s: %s %s" code message _data))
+       (jsonrpc-lambda (&key code message data &allow-other-keys)
+         (message "Error %s: %s %s" code message data))
        :deferred :compilation/compileQuery))))
 
 (defun codeql--query-server-run-query-from-path (query-path quick-eval &optional template-values src-filename src-buffer)
