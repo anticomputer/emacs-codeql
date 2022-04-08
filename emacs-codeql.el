@@ -948,13 +948,13 @@ Provides backwards references into the AST buffer from the source file.")
         [(:dbDir ,database-dataset-folder :workingSet "default")])
        :progressId ,(codeql--query-server-next-progress-id))
      :success-fn
-     (lexical-let ((buffer (current-buffer))
-                   (database-language database-language)
-                   (database-path database-path)
-                   (database-dataset-folder database-dataset-folder)
-                   (source-location-prefix source-location-prefix)
-                   (source-archive-root source-archive-root)
-                   (source-archive-zip source-archive-zip))
+     (let ((buffer (current-buffer))
+           (database-language database-language)
+           (database-path database-path)
+           (database-dataset-folder database-dataset-folder)
+           (source-location-prefix source-location-prefix)
+           (source-archive-root source-archive-root)
+           (source-archive-zip source-archive-zip))
        (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
          ;;(message "Success: %s" registeredDatabases)
          (with-current-buffer buffer
@@ -996,7 +996,7 @@ Provides backwards references into the AST buffer from the source file.")
       [(:dbDir ,database-dataset-folder :workingSet "default")])
      :progressId ,(codeql--query-server-next-progress-id))
    :success-fn
-   (lexical-let
+   (let
        ((buffer (current-buffer))
         (database-dataset-folder database-dataset-folder))
      (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
@@ -1193,7 +1193,7 @@ Sets an optional HEADER."
                                           (let ((row-data (reverse row-data)))
                                             (mapconcat #'identity
                                                        (cl-map 'list
-                                                               (lexical-let ((parent-buffer parent-buffer))
+                                                               (let ((parent-buffer parent-buffer))
                                                                  (lambda (node)
                                                                    ;; we use buffer-local variables here
                                                                    (with-current-buffer parent-buffer
@@ -2355,14 +2355,14 @@ Our implementation simply returns the thing at point as a candidate."
            :evaluation/runQueries run-query-params
            :timeout codeql-query-server-timeout
            :success-fn
-           (lexical-let ((buffer-context buffer-context)
-                         (query-info query-info)
-                         (bqrs-path bqrs-path)
-                         (query-path query-path)
-                         (db-path db-path)
-                         (quick-eval quick-eval)
-                         (src-filename src-filename)
-                         (src-root codeql--database-source-archive-root))
+           (let ((buffer-context buffer-context)
+                 (query-info query-info)
+                 (bqrs-path bqrs-path)
+                 (query-path query-path)
+                 (db-path db-path)
+                 (quick-eval quick-eval)
+                 (src-filename src-filename)
+                 (src-root codeql--database-source-archive-root))
              (jsonrpc-lambda (&rest _)
                (with-current-buffer buffer-context
                  (codeql--query-server-jsonrpc-unregister-request))
@@ -2481,15 +2481,15 @@ Our implementation simply returns the thing at point as a candidate."
            :compilation/compileQuery compile-query-params
            :timeout codeql-query-server-timeout
            :success-fn
-           (lexical-let ((buffer-context buffer-context)
-                         (bqrs-path bqrs-path)
-                         (qlo-path qlo-path)
-                         (query-path query-path)
-                         (query-info query-info)
-                         (db-path db-path)
-                         (quick-eval quick-eval)
-                         (template-values template-values)
-                         (src-filename src-filename))
+           (let ((buffer-context buffer-context)
+                 (bqrs-path bqrs-path)
+                 (qlo-path qlo-path)
+                 (query-path query-path)
+                 (query-info query-info)
+                 (db-path db-path)
+                 (quick-eval quick-eval)
+                 (template-values template-values)
+                 (src-filename src-filename))
              (jsonrpc-lambda (&key messages &allow-other-keys)
                (with-current-buffer buffer-context
                  (codeql--query-server-jsonrpc-unregister-request))
@@ -2735,7 +2735,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                :notification-dispatcher #'codeql--query-server-handle-notification
                :request-dispatcher #'codeql--query-server-handle-request
                :on-shutdown
-               (lexical-let ((buffer-context (current-buffer)))
+               (let ((buffer-context (current-buffer)))
                  (lambda (obj)
                    (codeql--query-server-on-shutdown obj buffer-context)))))
         (message "Started query server.")))))
