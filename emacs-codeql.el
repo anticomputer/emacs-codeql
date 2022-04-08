@@ -829,15 +829,17 @@ Provides backwards references into the AST buffer from the source file.")
                (format "gh %s" cmd) cmd))
       (with-temp-buffer (insert-file-contents sarif-file) (buffer-string)))))
 
-;; (defun codeql--database-archive-zipinfo ()
-;;   "Return extraction-relative file listing for source archive zip."
-;;   (let ((zipinfo (codeql--shell-command-to-string
-;;                   (format "%s -1 %s"
-;;                           (executable-find "zipinfo" (file-remote-p default-directory))
-;;                           codeql--database-source-archive-zip))))
-;;     (when zipinfo
-;;       (let ((zipinfo-relative-paths
-;;              (cl-map 'list (lambda (file) file) (split-string zipinfo "\n"))))))))
+(defun codeql--database-archive-zipinfo ()
+  "Return extraction-relative file listing for source archive zip."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (let ((zipinfo (codeql--shell-command-to-string
+                  (format "%s -1 %s"
+                          (executable-find "zipinfo" (file-remote-p default-directory))
+                          codeql--database-source-archive-zip))))
+    (when zipinfo
+      (let ((zipinfo-relative-paths
+             (cl-map 'list (lambda (file) file) (split-string zipinfo "\n"))))
+        zipinfo-relative-paths))))
 
 (defun codeql--database-extract-source-archive-zip (trusted-root)
   "Return extraction-relative file listing for source archive zip."
@@ -2780,6 +2782,29 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (setq codeql--path-problem-max-paths max-paths))
 
+(defun codeql--database-open-file (filename)
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (when-let ((src-buffer (find-file filename)))
+    (with-current-buffer src-buffer
+      ;; enable our xref backend, this kicks in templated queries for refs and defs
+      (codeql-xref-backend))))
+
+(defun codeql-database-open-source-archive-file ()
+  "Open a file from the active database source archive."
+  (interactive)
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (when (and codeql--database-source-archive-root
+             codeql--database-source-archive-zip)
+    (let* ((relative-file-path
+            (completing-read "Source archive file: "
+                             (codeql--database-archive-zipinfo)))
+           (full-file-path
+            (codeql--tramp-wrap
+             (format "%s/%s"
+                     codeql--database-source-archive-root
+                     relative-file-path))))
+      (codeql--database-open-file full-file-path))))
+
 (transient-define-prefix codeql-transient-query-server-interact ()
   "Interact with a CodeQL query server via transient menu."
   [:class transient-columns
@@ -2793,6 +2818,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
             :description
             (lambda ()
               (codeql-query-server-active-database)))
+           ("f" "open file" codeql-database-open-source-archive-file)
            ("k" "known" codeql-database-history)]
           ["Query"
            ("r" "run" codeql-query-server-run-query)
