@@ -249,24 +249,25 @@ Leave nil for default.")
 (defun codeql--search-paths-from-codeql-config ()
   "Grab search paths from the codeql cli configuration file."
   (let ((config-path "~/.config/codeql/config"))
-    (when-let ((search-paths-string
-                (and (codeql--file-exists-p config-path)
-                     (codeql--shell-command-to-string
-                      ;; deal with both = and " " syntaxes
-                      (format "grep '^--search-path' %s" config-path)))))
-      (let ((path-config
-             (cadr (split-string (string-trim-right search-paths-string) " +\\|="))))
-        ;; make sure all the search paths exist
-        (cl-loop with search-paths = (split-string path-config ":")
-                 for path in search-paths
-                 unless (codeql--file-exists-p path) do
-                 (error (format "Non-existing search path in configuration: %s" path))
-                 collect
-                 (let ((local-search-path
-                        (codeql--tramp-unwrap
-                         (expand-file-name (codeql--tramp-wrap path)))))
-                   (message "Adding %s to search path from codeql cli config." local-search-path)
-                   local-search-path))))))
+    (when-let* ((config-file
+                 (and (codeql--file-exists-p config-path)
+                      (with-temp-buffer
+                        (insert-file-contents
+                         (codeql--tramp-wrap config-path))
+                        (buffer-string))))
+                (path-config
+                 (when (string-match "^--search-path\\( +\\|=\\)\\(.*\\)" config-file)
+                   (match-string 2 config-file))))
+      (cl-loop with search-paths = (split-string path-config ":")
+               for path in search-paths
+               unless (codeql--file-exists-p path) do
+               (error (format "Non-existing search path in configuration: %s" path))
+               collect
+               (let ((local-search-path
+                      (codeql--tramp-unwrap
+                       (expand-file-name (codeql--tramp-wrap path)))))
+                 (message "Adding %s to search path from codeql cli config." local-search-path)
+                 local-search-path)))))
 
 (defun codeql--search-paths-from-emacs-config ()
   "Grab search paths from our emacs configuration."
