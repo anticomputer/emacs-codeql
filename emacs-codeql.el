@@ -1016,7 +1016,7 @@ Provides backwards references into the AST buffer from the source file.")
       (file-name-base
        (directory-file-name
         codeql--active-database))
-    "(no active db)"))
+    "select"))
 
 ;; XXX: this feels a little crummy still, revisit
 (defun codeql--uri-to-filename (uri)
@@ -2793,17 +2793,18 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
   "Open a file from the active database source archive."
   (interactive)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (when (and codeql--database-source-archive-root
-             codeql--database-source-archive-zip)
-    (let* ((relative-file-path
-            (completing-read "Source archive file: "
-                             (codeql--database-archive-zipinfo)))
-           (full-file-path
-            (codeql--tramp-wrap
-             (format "%s/%s"
-                     codeql--database-source-archive-root
-                     relative-file-path))))
-      (codeql--database-open-file full-file-path))))
+  (if (and codeql--database-source-archive-root
+           codeql--database-source-archive-zip)
+      (let* ((relative-file-path
+              (completing-read "Source archive file: "
+                               (codeql--database-archive-zipinfo)))
+             (full-file-path
+              (codeql--tramp-wrap
+               (format "%s/%s"
+                       codeql--database-source-archive-root
+                       relative-file-path))))
+        (codeql--database-open-file full-file-path))
+    (message "No active database.")))
 
 (transient-define-prefix codeql-transient-query-server-interact ()
   "Interact with a CodeQL query server via transient menu."
@@ -2818,7 +2819,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
             :description
             (lambda ()
               (codeql-query-server-active-database)))
-           ("f" "open file" codeql-database-open-source-archive-file)
+           ("f" "source file" codeql-database-open-source-archive-file)
            ("k" "known" codeql-database-history)]
           ["Query"
            ("r" "run" codeql-query-server-run-query)
