@@ -2819,7 +2819,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
             :description
             (lambda ()
               (codeql-query-server-active-database)))
-           ("f" "source file" codeql-database-open-source-archive-file)
+           ("f" "source" codeql-database-open-source-archive-file)
            ("k" "known" codeql-database-history)]
           ["Query"
            ("r" "run" codeql-query-server-run-query)
