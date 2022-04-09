@@ -2311,13 +2311,13 @@ Our implementation simply returns the thing at point as a candidate."
         (message "Query canceled."))
     (message "No active query running.")))
 
-(defun codeql--jsonrpc-async-request (connection
-                                      method
-                                      params
-                                      &rest args
-                                      &key _success-fn _error-fn
-                                      _timeout-fn
-                                      _timeout _deferred)
+(cl-defun codeql--jsonrpc-async-request (connection
+                                         method
+                                         params
+                                         &rest args
+                                         &key _success-fn _error-fn
+                                         _timeout-fn
+                                         _timeout _deferred)
   ;; we need to get at the request id, so we use our own wrapper
   (apply #'jsonrpc--async-request-1 connection method params args))
 
