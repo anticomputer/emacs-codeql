@@ -406,9 +406,13 @@ Leave nil for default.")
   "Format a QL region, use when ql-tree-sitter + agressive-indent is not available."
   (interactive)
   (shell-command-on-region
-   (if min min (point-min))
-   (if max max (point-max))
-   (format "%s query format --no-syntax-errors -- -" codeql--cli-buffer-local) t t))
+   (or min (point-min))
+   (or max (point-max))
+   (format "%s query format --no-syntax-errors -- -"
+           (if codeql--use-gh-cli
+               (format "gh %s" codeql--cli-buffer-local)
+             codeql--cli-buffer-local))
+   t t))
 
 (defun codeql-format-region (min max)
   "Format the current CodeQL region if active, or entire buffer if not."
@@ -700,9 +704,7 @@ Provides backwards references into the AST buffer from the source file.")
     (message "Running %s cmd: %s" (if (file-remote-p default-directory) "remote" "local") cmd))
   (condition-case nil
       (with-temp-buffer
-        (let* ((cmd (if codeql--use-gh-cli (format "gh %s" cmd) cmd))
-               ;;(stderr-buffer (get-buffer-create "* codeql--shell-command-to-string stderr *"))
-               (stdout-buffer (generate-new-buffer (format "* stdout: %s *" cmd)))
+        (let* ((stdout-buffer (generate-new-buffer (format "* stdout: %s *" cmd)))
                ;; process-file will work in remote context pending default-directory
                (exit-code
                 (apply 'process-file
