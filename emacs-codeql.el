@@ -1086,7 +1086,7 @@ Provides backwards references into the AST buffer from the source file.")
 (defun codeql--escape-org-description (description &optional br-open br-close)
   "Replace [] with something harmless in org link descriptions."
   (replace-regexp-in-string "\\[\\|\\]"
-                            (lambda (x) (if (string= x "[") (or br-open "|") (or br-close "|"))) description))
+                            (lambda (x) (if (string= x "[") (or br-open "⁅") (or br-close "⁆"))) description))
 
 (defun codeql--result-node-to-org (node &optional custom-description br-open br-close)
   "Transform a result node into an org compatible link|string representation."
