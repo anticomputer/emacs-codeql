@@ -2,7 +2,7 @@
 
 ;; Author: Bas Alberts
 ;; Maintainer: Bas Alberts <bas@anti.computer>
-;; Version: 0.1-pre-alpha
+;; Version: 0.1
 ;; Package-Requires: ((emacs "27.1") (seq "2.23") (transient "0.3.7") (jsonrpc "1.0.15") (tree-sitter "0.18.0") (tree-sitter-langs "0.11.4") (tree-sitter-indent) (aggressive-indent) (eglot) (projectile) (org))
 ;; Homepage: https://github.com/anticomputer/codeql.el
 ;; Keywords: dev
