@@ -1998,7 +1998,6 @@ Our implementation simply returns the thing at point as a candidate."
 
 (defun codeql--sort-node (node)
   ;; sort this node's children
-  (message "Sorting node children!")
   (setf (codeql--ast-item-children node)
         (sort (codeql--ast-item-children node)
               (lambda (left right)
@@ -2011,7 +2010,6 @@ Our implementation simply returns the thing at point as a candidate."
   ;; sort all the children of the tree
   (seq-map #'codeql--sort-node tree)
   ;; sort all the roots of the tree and return that vector
-  (message "Sorting tree!")
   (sort tree (lambda (left right)
                (< (codeql--ast-item-order left) (codeql--ast-item-order right)))))
 
