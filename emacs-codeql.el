@@ -821,7 +821,7 @@ Provides backwards references into the AST buffer from the source file.")
         zipinfo-relative-paths))))
 
 (defun codeql--database-extract-source-archive-zip (trusted-root)
-  "Return extraction-relative file listing for source archive zip."
+  "Mount or extract a database source zip archive, ensuring TRUSTED-ROOT."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (message "archive-root: %s" (codeql--file-truename codeql--database-source-archive-root))
   (message "trusted-root: %s" (codeql--file-truename trusted-root))
