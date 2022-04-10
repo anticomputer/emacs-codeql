@@ -244,7 +244,8 @@ Leave nil for default.")
                (process-file "gh" nil `(,(current-buffer) nil) nil "codeql")))
     (error nil)))
 
-(defvar-local codeql--use-gh-cli nil)
+(defun codeql--cli-buffer-local-as-string ()
+  (mapconcat #'identity codeql--cli-buffer-local " "))
 
 (defun codeql--search-paths-from-codeql-config ()
   "Grab search paths from the codeql cli configuration file."
@@ -306,14 +307,11 @@ Leave nil for default.")
   (cl-assert codeql--cli-buffer-local t)
 
   (let ((lsp-server-cmd
-         (append
-          (when codeql--use-gh-cli '("gh"))
-          (list
-           codeql--cli-buffer-local
-           "execute" "language-server"
-           (format "--search-path=%s" (codeql--search-path))
-           "--check-errors" "ON_CHANGE"
-           "-q"))))
+         (append codeql--cli-buffer-local
+                 (list "execute" "language-server"
+                       (format "--search-path=%s" (codeql--search-path))
+                       "--check-errors" "ON_CHANGE"
+                       "-q"))))
     (message "Using LSP server cmd: %s" lsp-server-cmd)
     lsp-server-cmd))
 
@@ -326,37 +324,33 @@ Leave nil for default.")
 
 (defun codeql--get-cli-version ()
   ;; used in setup for ql-tree-sitter-mode so we can not assert the mode here yet.
-  (let* ((cmd (format "%s version" codeql--cli-buffer-local)))
-    (codeql--shell-command-to-string
-     (if codeql--use-gh-cli
-         (format "gh %s" cmd) cmd))))
+  (let* ((cmd (format "%s version" (codeql--cli-buffer-local-as-string))))
+    (codeql--shell-command-to-string cmd)))
 
 (defun codeql--buffer-local-init-hook ()
   "Set up a codeql buffer context correctly."
   ;; use whatever the current config for codeql-cli and codeql-search-paths is
-  (setq codeql--cli-buffer-local codeql-cli)
+  (setq codeql--cli-buffer-local (list codeql-cli))
 
   ;; decide whether we want to use the gh cli to run our codeql commands
-  (when (and codeql-use-gh-codeql-extension-when-available
-             (codeql--gh-codeql-cli-available-p))
-    (message "Enabling gh cli codeql extension use.")
-    (setq codeql--use-gh-cli t)
-    (setq codeql--cli-buffer-local "codeql"))
-
-  ;; ensure we have somewhere to store result data in both local and remote contexts
-  (codeql--init-state-dirs)
-
-  ;; if we're in a remote context, make absolutely sure we know where the cli lives
-  (when (and (file-remote-p default-directory))
-    (unless codeql--use-gh-cli
-      ;; no gh cli available ... we still need a path
+  (if (and codeql-use-gh-codeql-extension-when-available
+           (codeql--gh-codeql-cli-available-p))
+      (progn
+        (message "Enabling gh cli codeql extension use.")
+        (setq codeql--cli-buffer-local
+              (list (executable-find "gh" (file-remote-p default-directory)) "codeql")))
+    ;; if we're in a remote context, make absolutely sure we know where the cli lives
+    (when (and (file-remote-p default-directory))
       (let ((remote-path
              (string-trim-right
               (or (executable-find "codeql" t)
                   (read-file-name "Need remote path to codeql cli bin: "
                                   nil default-directory t)))))
         (message "Setting remote codeql cli path: %s" remote-path)
-        (setq codeql--cli-buffer-local (codeql--tramp-unwrap remote-path)))))
+        (setq codeql--cli-buffer-local (list (codeql--tramp-unwrap remote-path))))))
+
+  ;; ensure we have somewhere to store result data in both local and remote contexts
+  (codeql--init-state-dirs)
 
   ;; ensure we were able to resolve _A_ path for the codeql cli local|remote execution
   (cl-assert codeql--cli-buffer-local t)
@@ -409,9 +403,7 @@ Leave nil for default.")
    (or min (point-min))
    (or max (point-max))
    (format "%s query format --no-syntax-errors -- -"
-           (if codeql--use-gh-cli
-               (format "gh %s" codeql--cli-buffer-local)
-             codeql--cli-buffer-local))
+           (codeql--cli-buffer-local-as-string))
    t t))
 
 (defun codeql-format-region (min max)
@@ -733,11 +725,9 @@ Provides backwards references into the AST buffer from the source file.")
     (message "Resolving query paths.")
     ;; we don't need to use --additional-packs since we already offer search path precedence control
     (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --search-path=%s --query=%s"
-                        codeql--cli-buffer-local (codeql--search-path)
+                        (codeql--cli-buffer-local-as-string) (codeql--search-path)
                         (codeql--tramp-unwrap query-path)))
-           (json (codeql--shell-command-to-string
-                  (if codeql--use-gh-cli
-                      (format "gh %s" cmd) cmd))))
+           (json (codeql--shell-command-to-string cmd)))
       (when json
         (condition-case nil
             (cl-destructuring-bind (&key libraryPath dbscheme &allow-other-keys)
@@ -752,10 +742,8 @@ Provides backwards references into the AST buffer from the source file.")
   "Resolve info for database at DATABASE-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let* ((cmd (format "%s resolve database -v --log-to-stderr --format=json -- %s"
-                      codeql--cli-buffer-local (codeql--tramp-unwrap database-path)))
-         (json (codeql--shell-command-to-string
-                (if codeql--use-gh-cli
-                    (format "gh %s" cmd) cmd))))
+                      (codeql--cli-buffer-local-as-string) (codeql--tramp-unwrap database-path)))
+         (json (codeql--shell-command-to-string cmd)))
     (when json
       (condition-case nil
           (json-parse-string json :object-type 'alist)
@@ -765,10 +753,8 @@ Provides backwards references into the AST buffer from the source file.")
   "Resolve upgrades for DATABASE-SCHEME."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let* ((cmd (format "%s resolve upgrades -v --log-to-stderr --format=json -- %s"
-                      codeql--cli-buffer-local (codeql--tramp-unwrap database-scheme)))
-         (json (codeql--shell-command-to-string
-                (if codeql--use-gh-cli
-                    (format "gh %s" cmd) cmd))))
+                      (codeql--cli-buffer-local-as-string) (codeql--tramp-unwrap database-scheme)))
+         (json (codeql--shell-command-to-string cmd)))
     (when json
       (condition-case nil
           (json-parse-string json :object-type 'alist)
@@ -778,10 +764,8 @@ Provides backwards references into the AST buffer from the source file.")
   "Retrieve metadata for QUERY-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let* ((cmd (format "%s resolve metadata -v --log-to-stderr --format=json -- %s"
-                      codeql--cli-buffer-local (codeql--tramp-unwrap query-path)))
-         (json (codeql--shell-command-to-string
-                (if codeql--use-gh-cli
-                    (format "gh %s" cmd) cmd))))
+                      (codeql--cli-buffer-local-as-string) (codeql--tramp-unwrap query-path)))
+         (json (codeql--shell-command-to-string cmd)))
     (when json
       (condition-case nil
           (json-parse-string json :object-type 'alist)
@@ -791,10 +775,8 @@ Provides backwards references into the AST buffer from the source file.")
   "Retrieve info for BQRS-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let* ((cmd (format "%s bqrs info -v --log-to-stderr --format=json -- %s"
-                      codeql--cli-buffer-local (codeql--tramp-unwrap bqrs-path)))
-         (json (codeql--shell-command-to-string
-                (if codeql--use-gh-cli
-                    (format "gh %s" cmd) cmd))))
+                      (codeql--cli-buffer-local-as-string) (codeql--tramp-unwrap bqrs-path)))
+         (json (codeql--shell-command-to-string cmd)))
     (when json
       (condition-case nil
           (json-parse-string json :object-type 'alist)
@@ -803,33 +785,27 @@ Provides backwards references into the AST buffer from the source file.")
 (defun codeql--bqrs-to-csv (bqrs-path entities)
   (let* ((csv-file (concat bqrs-path ".csv"))
          (cmd (format "%s bqrs decode --output=%s --format=csv --entities=%s -- %s"
-                      codeql--cli-buffer-local
+                      (codeql--cli-buffer-local-as-string)
                       (codeql--tramp-unwrap csv-file) entities (codeql--tramp-unwrap bqrs-path))))
-    (when (codeql--shell-command-to-string
-           (if codeql--use-gh-cli
-               (format "gh %s" cmd) cmd))
+    (when (codeql--shell-command-to-string cmd)
       (with-temp-buffer (insert-file-contents csv-file) (buffer-string)))))
 
 (defun codeql--bqrs-to-json (bqrs-path entities)
   (let* ((json-file (concat bqrs-path ".json"))
          (cmd (format "%s bqrs decode --output=%s --format=json --entities=%s -- %s"
-                      codeql--cli-buffer-local
+                      (codeql--cli-buffer-local-as-string)
                       (codeql--tramp-unwrap json-file) entities (codeql--tramp-unwrap bqrs-path))))
-    (when (codeql--shell-command-to-string
-           (if codeql--use-gh-cli
-               (format "gh %s" cmd) cmd))
+    (when (codeql--shell-command-to-string cmd)
       (with-temp-buffer (insert-file-contents json-file) (buffer-string)))))
 
 (defun codeql--bqrs-to-sarif (bqrs-path id kind &optional max-paths)
   (cl-assert (and id kind) t)
   (let* ((sarif-file (concat bqrs-path ".sarif"))
          (cmd (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s -- %s"
-                      codeql--cli-buffer-local id kind
+                      (codeql--cli-buffer-local-as-string) id kind
                       (codeql--tramp-unwrap sarif-file) (or max-paths codeql--path-problem-max-paths)
                       (codeql--tramp-unwrap bqrs-path))))
-    (when (codeql--shell-command-to-string
-           (if codeql--use-gh-cli
-               (format "gh %s" cmd) cmd))
+    (when (codeql--shell-command-to-string cmd)
       (with-temp-buffer (insert-file-contents sarif-file) (buffer-string)))))
 
 (defun codeql--database-archive-zipinfo ()
@@ -845,7 +821,7 @@ Provides backwards references into the AST buffer from the source file.")
         zipinfo-relative-paths))))
 
 (defun codeql--database-extract-source-archive-zip (trusted-root)
-  "Return extraction-relative file listing for source archive zip."
+  "Mount or extract a database source zip archive, ensuring TRUSTED-ROOT."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (message "archive-root: %s" (codeql--file-truename codeql--database-source-archive-root))
   (message "trusted-root: %s" (codeql--file-truename trusted-root))
@@ -855,7 +831,7 @@ Provides backwards references into the AST buffer from the source file.")
         (message "Source root verified to exist in trusted path ... extracting|mounting.")
         (cond
          ;; I like to use https://github.com/google/mount-zip so selfishly check for it here
-         ((executable-find "mount-zip")
+         ((executable-find "mount-zip" (file-remote-p default-directory))
           (message "Mounting source archive with mount-zip.")
           (when (codeql--shell-command-to-string
                  (format "%s -o nospecials -o nosymlinks -o nohardlinks %s %s"
@@ -864,7 +840,7 @@ Provides backwards references into the AST buffer from the source file.")
                          (codeql--file-truename codeql--database-source-archive-root)))
             (message "Mounted source archive with mount-zip.")))
          ;; fall back to regular full extraction here
-         ((executable-find "unzip")
+         ((executable-find "unzip" (file-remote-p default-directory))
           (message "Extracting source archive with unzip.")
           (when (codeql--shell-command-to-string
                  (format "%s %s -d %s"
@@ -880,9 +856,9 @@ Provides backwards references into the AST buffer from the source file.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert source-zip-root t)
   (when-let ((true-root (codeql--file-truename source-zip-root))
-             (umount (executable-find "umount"))
-             (mountpoint (executable-find "mountpoint"))
-             (mount-zip (executable-find "mount-zip")))
+             (umount (executable-find "umount" (file-remote-p default-directory)))
+             (mountpoint (executable-find "mountpoint" (file-remote-p default-directory)))
+             (mount-zip (executable-find "mount-zip" (file-remote-p default-directory))))
     (message "archive-root: %s" true-root)
     ;; we only need to do this if mount-zip is available, since that's the only time src will be mounted
     (when (and (codeql--file-exists-p true-root)
@@ -2669,10 +2645,8 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
 (defun codeql--query-server-resolve-ram (&optional max-ram)
   "Resolve ram options for jvm, optionally bounding to MAX-RAM in MB."
   (let* ((max-ram (if max-ram (format "-M=%s" max-ram) ""))
-         (cmd (format "%s resolve ram %s --" codeql--cli-buffer-local max-ram))
-         (options (codeql--shell-command-to-string
-                   (if codeql--use-gh-cli
-                       (format "gh %s" cmd) cmd))))
+         (cmd (format "%s resolve ram %s --" (codeql--cli-buffer-local-as-string) max-ram))
+         (options (codeql--shell-command-to-string cmd)))
     (when options
       ;; errr ... it's late
       (split-string (string-trim-right options) "\n"))))
@@ -2710,8 +2684,8 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                            (file-name-base (directory-file-name default-directory))
                            (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
              (cmd (append
-                   (when codeql--use-gh-cli '("gh"))
-                   (list codeql--cli-buffer-local "execute" "query-server")
+                   codeql--cli-buffer-local
+                   (list "execute" "query-server")
                    args)))
         (message "Starting query server.")
         ;; manage these buffer local
