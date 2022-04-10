@@ -347,7 +347,7 @@ Leave nil for default.")
                   (read-file-name "Need remote path to codeql cli bin: "
                                   nil default-directory t)))))
         (message "Setting remote codeql cli path: %s" remote-path)
-        (setq codeql--cli-buffer-local (codeql--tramp-unwrap remote-path)))))
+        (setq codeql--cli-buffer-local (list (codeql--tramp-unwrap remote-path))))))
 
   ;; ensure we have somewhere to store result data in both local and remote contexts
   (codeql--init-state-dirs)
