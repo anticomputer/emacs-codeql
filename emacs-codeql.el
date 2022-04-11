@@ -115,7 +115,8 @@
   (if (yes-or-no-p "tree-sitter-langs ql support not found, install artifacts now?")
       (let* ((arch (string-trim-right (shell-command-to-string "uname -m")))
              (sys (cond ((eq system-type 'gnu/linux) "linux")
-                        ((eq system-type 'darwin) "darwin")))
+                        ((eq system-type 'darwin) "darwin")
+                        (t (error "Your platform is currently not supported."))))
              (cmd (format "cp %s/bin/%s/%s/ql.* %s"
                           (file-name-directory (or load-file-name (buffer-file-name)))
                           sys arch (tree-sitter-langs--bin-dir))))
