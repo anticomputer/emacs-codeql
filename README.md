@@ -133,32 +133,7 @@ The `codeql-search-paths` variable in `emacs-codeql` exists purely to provide yo
 
 ### Optional: build custom tree-sitter QL artifacts
 
-If this package does not contain the required `tree-sitter-langs` artifacts for your system, or you simply do not trust the binary artifacts I provided, you may also need to install the following to be able to build the required QL `tree-sitter-langs` support for your system.
-
-```elisp
-(use-package tree-sitter
-  :quelpa
-  (tree-sitter
-   :repo "anticomputer/elisp-tree-sitter-2"
-   :fetcher github
-   :branch "anticomputer-ql"
-   :files ("lisp/*.el"
-           (:exclude "lisp/tree-sitter-tests.el")))
-  :demand
-  :ensure t)
-
-(use-package tree-sitter-langs
-  :quelpa
-  (tree-sitter-langs
-   :repo "anticomputer/tree-sitter-langs-1"
-   :fetcher github
-   :branch "anticomputer-ql"
-   :files (:defaults
-           "queries"))
-  :after tree-sitter
-  :demand
-  :ensure t)
-```
+If this package does not contain the required `tree-sitter-langs` artifacts for your system, or you simply do not trust the binary artifacts I provided, you will have to build your own.
 
 Follow the [tree-sitter-langs documentation](https://github.com/anticomputer/tree-sitter-langs-1) for detailed instructions on how to build such an artifact. 
 
@@ -166,12 +141,8 @@ In a nutshell:
 
 1. Install cask. 
 2. run `cask install` for my fork (`git clone --branch anticomputer-ql git@github.com:/anticomputer/tree-sitter-langs-1`) of `tree-sitter-langs` from its project root. 
-3. Download a copy of the [binary release](https://github.com/tree-sitter/tree-sitter/releases/tag/v0.19.5) of `tree-sitter` and put it in your `PATH` somewhere. 
+3. Download a copy of the [binary release](https://github.com/tree-sitter/tree-sitter/releases/tag/v0.19.5) of `tree-sitter` and put it in your `PATH` somewhere. `tree-sitter` version <0.20 is required due to a breaking change in >= 0.20, I use 0.19.5.
 4. Compile the QL support using `script/compile ql` from `tree-sitter-langs` project root.
-
-NOTE:
-
-`tree-sitter` version <0.20 is required due to a breaking change in >= 0.20, I use 0.19.5.
 
 If you're on a Mac, you'll also need to set `EMACSDATA` and `EMACSLOADPATH` correctly, e.g when using MacPorts Emacs.app:
 
@@ -179,6 +150,8 @@ If you're on a Mac, you'll also need to set `EMACSDATA` and `EMACSLOADPATH` corr
 EMACSDATA=/Applications/MacPorts/EmacsMac.app/Contents/Resources/etc EMACSLOADPATH=/Applications/MacPorts/EmacsMac.app/Contents/Resources/lisp cask install
 EMACSDATA=/Applications/MacPorts/EmacsMac.app/Contents/Resources/etc EMACSLOADPATH=/Applications/MacPorts/EmacsMac.app/Contents/Resources/lisp script/compile ql
 ```
+
+On m1 Macs, you may be able to use the x64 tree-sitter 0.19.5 binary to compile the artifact, but I have not verified this. If this is not the case, you'll have to compile tree-sitter 0.19.5 yourself.
 
 After building the QL artifact(s) for the architectures and platforms you need to support, you'll want to grab `bin/ql.*` and move those into `~/.emacs.d/elpa/tree-sitter-langs-*/bin/` and restart emacs. 
 
