@@ -113,9 +113,12 @@
                       (file-exists-p (concat (tree-sitter-langs--bin-dir) f)))
                     '("/ql.dylib" "/ql.so")))
   (if (yes-or-no-p "tree-sitter-langs ql support not found, install artifacts now?")
-      (let ((cmd (format "cp %s/bin/ql.* %s"
-                         (file-name-directory (or load-file-name (buffer-file-name)))
-                         (tree-sitter-langs--bin-dir))))
+      (let* ((arch (string-trim-right (shell-command-to-string "uname -m")))
+             (sys (cond ((eq system-type 'gnu/linux) "linux")
+                        ((eq system-type 'darwin) "darwin")))
+             (cmd (format "cp %s/bin/%s/%s/ql.* %s"
+                          (file-name-directory (or load-file-name (buffer-file-name)))
+                          sys arch (tree-sitter-langs--bin-dir))))
         (message "Placing tree-sitter artifacts with %s" cmd)
         (cl-assert (eql 0 (shell-command cmd))))
     (error "emacs-codeql does not work without tree-sitter-langs support.")))
