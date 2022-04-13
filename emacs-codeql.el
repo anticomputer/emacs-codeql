@@ -1127,10 +1127,9 @@ Sets an optional HEADER."
                        ;; get ahead, but don't say nothing.
                        ""))
                     ;; do some basic ballpark alignment based on prefix label length
-                    (align (- 40 (+ 5 (length (codeql--escape-org-description
-                                               (codeql--result-node-label node)))))))
+                    (align (- 40 (+ 5 (length (codeql--escape-org-description (codeql--result-node-label node)))))))
                ;; yolo alignment
-               (insert (concat prefix (make-string align ?\s) suffix "\n"))))
+               (insert (concat prefix (make-string (if (< align 0) 5 align) ?\s) suffix "\n"))))
     ;; return our nodes as org list
     (buffer-string)))
 
