@@ -1286,6 +1286,41 @@ Sets an optional HEADER."
   (message ":url %s" (codeql--result-node-url node))
   (message "-- NODE SNIP STOP ---"))
 
+;; locations contain sinks for an issue, related-locations contain the sources for an issue
+;; so we need to group all the code flow paths (if any) according to their sources and sinks
+(defun codeql--issues-with-nodes (code-flows locations related-locations message rule-id)
+  "Returns issue nodes with grouped source-sink path nodes out of a SARIF result."
+  (let ((messages (split-string message "\n"))) ;; XXX: double check this always holds
+    (cl-assert (= (length related-locations) (length messages)) t)
+    ;; supposedly we'll always only have 1 main location for an issue, so this should work
+    (cl-loop with sink = (car (codeql--nodes-from-locations locations))
+             with sources = (codeql--nodes-from-locations related-locations)
+             for message in messages
+             for source in sources
+             ;; only grab paths that flow from the location sink to this related-location source
+             for grouped-paths =
+             (when code-flows
+               (cl-loop for code-flow across code-flows
+                        for thread-flows = (json-pointer-get code-flow "/threadFlows")
+                        for candidate-paths = (codeql--paths-from-thread-flows thread-flows)
+                        for paths =
+                        (cl-loop for path in candidate-paths
+                                 ;; source node of the candidate == related-location source node
+                                 when (string= (codeql--result-node-to-org (car path) "compare")
+                                               (codeql--result-node-to-org source "compare"))
+                                 collect path)
+                        when paths
+                        collect paths))
+             collect
+             (codeql--result-node-create
+              :label message
+              :mark "≔"
+              :code-flows grouped-paths
+              :rule-id rule-id
+              :locations (list sink)
+              :related-locations (list source)))))
+
+;; XXX: deprecated, keeping around just in case
 (defun codeql--issue-with-nodes (code-flows locations related-locations message rule-id)
   "Returns an issue node with all its associated nodes out of a SARIF result."
   (codeql--result-node-create
@@ -2171,11 +2206,12 @@ Our implementation simply returns the thing at point as a candidate."
                                 do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
                                 collect
                                 ;; each result gets collected as its resulting org-data
-                                (let* ((codeql--query-results (list (codeql--issue-with-nodes
-                                                                     code-flows
-                                                                     locations
-                                                                     related-locations
-                                                                     message rule-id)))
+                                (let* ((codeql--query-results (codeql--issues-with-nodes
+                                                               code-flows
+                                                               locations
+                                                               related-locations
+                                                               message
+                                                               rule-id))
                                        (kind (if code-flows 'path-problem 'problem)))
                                   (codeql--query-results-to-org codeql--query-results kind nil)))))
              ;; save off our results so we don't have to re-render for history
