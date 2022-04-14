@@ -1306,31 +1306,38 @@ Sets an optional HEADER."
    ;; this returns a list of related-location nodes
    (codeql--nodes-from-locations related-locations message)))
 
-;; locations contain sinks for an issue, related-locations contain the sources for an issue
-;; so we need to group all the code flow paths (if any) according to their sources and sinks
-;; but only if we're provided with related-locations, otherwise it's a single path result
 (defun codeql--issues-with-nodes (code-flows locations related-locations message rule-id)
-  "Returns issue nodes with grouped source-sink path nodes out of a SARIF result."
-  (if related-locations
-      ;; multi-path issue that might need source-sink grouping
-      (let ((messages (split-string message "\n"))) ;; XXX: double check this always holds
+  "Returns issue nodes with grouped path nodes out of a SARIF result."
+  (if (> (length related-locations) 1)
+      ;; multi-message issue that might need path grouping
+      (let ((messages (split-string message "\n")))
         (cl-assert (= (length related-locations) (length messages)) t)
         ;; supposedly we'll always only have 1 main location for an issue, so this should work
-        (cl-loop with sink = (car (codeql--nodes-from-locations locations))
-                 with sources = (codeql--nodes-from-locations related-locations)
+        (cl-loop with location-node = (car (codeql--nodes-from-locations locations))
+                 with related-nodes = (codeql--nodes-from-locations related-locations)
+                 ;; there should be as many related nodes as there are messages available
                  for message in messages
-                 for source in sources
-                 ;; only grab paths that flow from the location sink to this related-location source
+                 for related-node in related-nodes
+                 ;; XXX: this is an assumption, make sure it holds always
+                 ;; only grab paths that contain the current related-node for this grouping
                  for grouped-paths =
                  (when code-flows
                    (cl-loop for code-flow across code-flows
                             for thread-flows = (json-pointer-get code-flow "/threadFlows")
                             for candidate-paths = (codeql--paths-from-thread-flows thread-flows)
                             for paths =
+                            ;; do a horrible thing to check if related-node is in this path
                             (cl-loop for path in candidate-paths
-                                     ;; source node of the candidate == related-location source node
-                                     when (string= (codeql--result-node-to-org (car path) "compare")
-                                                   (codeql--result-node-to-org source "compare"))
+                                     when
+                                     (member t
+                                             (cl-map
+                                              'list
+                                              (let ((related-node-key
+                                                     (codeql--result-node-to-org related-node "compare")))
+                                                (lambda (node)
+                                                  (string= related-node-key
+                                                           (codeql--result-node-to-org node "compare"))))
+                                              path))
                                      collect path)
                             when paths
                             collect paths))
@@ -1340,9 +1347,9 @@ Sets an optional HEADER."
                   :mark "≔"
                   :code-flows grouped-paths
                   :rule-id rule-id
-                  :locations (list sink)
-                  :related-locations (list source))))
-    ;; no related locations, issue does not require grouping
+                  :locations (list location-node)
+                  :related-locations (list related-node))))
+    ;; <= 1 related locations, no grouping required
     (list (codeql--issue-with-nodes code-flows locations related-locations message rule-id))))
 
 (defun codeql--paths-from-thread-flows (thread-flows)
