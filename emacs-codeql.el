@@ -2194,34 +2194,35 @@ Our implementation simply returns the thing at point as a candidate."
                     (message "Found artifact contents.")
                     (cl-return t))
            ;; alrighty, let's start processing some results into org data
-           (when-let ((org-results
-                       (cl-loop for result across results
-                                with n = (length results)
-                                for i below n
-                                for message = (json-pointer-get result "/message/text")
-                                for rule-id = (json-pointer-get result "/ruleId")
-                                for code-flows = (json-pointer-get result "/codeFlows")
-                                for related-locations = (json-pointer-get result "/relatedLocations")
-                                for locations = (json-pointer-get result "/locations")
-                                do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
-                                collect
-                                ;; each result gets collected as its resulting org-data
-                                (let* ((codeql--query-results (codeql--issues-with-nodes
-                                                               code-flows
-                                                               locations
-                                                               related-locations
-                                                               message
-                                                               rule-id))
-                                       (kind (if code-flows 'path-problem 'problem)))
-                                  (codeql--query-results-to-org codeql--query-results kind nil)))))
-             ;; save off our results so we don't have to re-render for history
-             (with-temp-buffer
-               (cl-loop for org-data in org-results do (insert org-data))
-               (let ((rendered
-                      (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
-                 ;; save off the fully rendered version for speedy re-loads
-                 (with-temp-file (format "%s.org" bqrs-path)
-                   (insert rendered))))))))
+           (if-let ((org-results
+                     (cl-loop for result across results
+                              with n = (length results)
+                              for i below n
+                              for message = (json-pointer-get result "/message/text")
+                              for rule-id = (json-pointer-get result "/ruleId")
+                              for code-flows = (json-pointer-get result "/codeFlows")
+                              for related-locations = (json-pointer-get result "/relatedLocations")
+                              for locations = (json-pointer-get result "/locations")
+                              do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
+                              collect
+                              ;; each result gets collected as its resulting org-data
+                              (let* ((codeql--query-results (codeql--issues-with-nodes
+                                                             code-flows
+                                                             locations
+                                                             related-locations
+                                                             message
+                                                             rule-id))
+                                     (kind (if code-flows 'path-problem 'problem)))
+                                (codeql--query-results-to-org codeql--query-results kind nil)))))
+               ;; save off our results so we don't have to re-render for history
+               (with-temp-buffer
+                 (cl-loop for org-data in org-results do (insert org-data))
+                 (let ((rendered
+                        (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
+                   ;; save off the fully rendered version for speedy re-loads
+                   (with-temp-file (format "%s.org" bqrs-path)
+                     (insert rendered))))
+             (message "No results found.")))))
 
        ;; fall through to raw results parsing
        (t
