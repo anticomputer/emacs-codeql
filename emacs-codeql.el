@@ -805,7 +805,12 @@ Provides backwards references into the AST buffer from the source file.")
 (defun codeql--bqrs-to-sarif (bqrs-path id kind &optional max-paths)
   (cl-assert (and id kind) t)
   (let* ((sarif-file (concat bqrs-path ".sarif"))
-         (cmd (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s -- %s"
+         ;; XXX: TODO check out --column-kind a bit deeper as well
+         ;; it's important to enable --no-group-results, otherwise we get piled
+         ;; on messages for a single result which complicates SARIF parsing
+         ;; also note that our --max-paths is set to 10 by default, as to 4 in
+         ;; the codeql extension, which is why we show more results
+         (cmd (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s --no-group-results -- %s"
                       (codeql--cli-buffer-local-as-string) id kind
                       (codeql--tramp-unwrap sarif-file) (or max-paths codeql--path-problem-max-paths)
                       (codeql--tramp-unwrap bqrs-path))))
@@ -1033,7 +1038,8 @@ Provides backwards references into the AST buffer from the source file.")
   (rule-id           nil :read-only t)
   (code-flows        nil :read-only t)
   (locations         nil :read-only t)
-  (related-locations nil :read-only t))
+  (related-locations nil :read-only t)
+  (related-id        nil :read-only t))
 
 ;;; Org-mode based result rendering, so we can turn results into audit notes \o/
 
@@ -1106,7 +1112,7 @@ Sets an optional HEADER."
              ;; (codeql--print-node node)
              (let* ((prefix
                      (format
-                      "%s. %s %s" (1+ i)
+                      "%4s. %s %s" (1+ i)
                       (or (codeql--result-node-mark node) " ")
                       ;; make sure we have our buffer-local db state
                       (with-current-buffer parent-buffer
@@ -1127,9 +1133,9 @@ Sets an optional HEADER."
                        ;; get ahead, but don't say nothing.
                        ""))
                     ;; do some basic ballpark alignment based on prefix label length
-                    (align (- 40 (+ 5 (length (codeql--escape-org-description (codeql--result-node-label node)))))))
+                    (align (- 50 (+ 10 (length (codeql--escape-org-description (codeql--result-node-label node)))))))
                ;; yolo alignment
-               (insert (concat prefix (make-string (if (< align 0) 5 align) ?\s) suffix "\n"))))
+               (insert (concat prefix (make-string (if (< align 0) 10 align) ?\s) suffix "\n"))))
     ;; return our nodes as org list
     (buffer-string)))
 
@@ -1202,10 +1208,12 @@ Sets an optional HEADER."
                                  (format "* %s [%s] %s ... %s:%s:%s"
                                          (or (codeql--result-node-mark issue) " ")
                                          (codeql--result-node-rule-id issue)
+                                         ;; swap sarif markdown links for org links if required
                                          (with-current-buffer parent-buffer
-                                           (codeql--result-node-to-org
-                                            location
-                                            (codeql--result-node-label issue)))
+                                           (if related-locations
+                                               (codeql--swap-sarif-links-for-org-links
+                                                (codeql--result-node-label issue) related-locations)
+                                             (codeql--result-node-label issue)))
                                          (with-current-buffer parent-buffer
                                            (codeql--result-node-to-org
                                             location
@@ -1226,10 +1234,7 @@ Sets an optional HEADER."
                                                (insert (codeql--org-list-from-nodes
                                                         parent-buffer
                                                         nodes
-                                                        (format "** Path #%s\n" i)))))))
-                  ;; add related locations as a top level
-                  (when related-locations
-                    (insert (codeql--org-list-from-nodes parent-buffer related-locations "** Related Locations\n"))))))
+                                                        (format "** Path #%s\n" i))))))))))
 
       ;; return final org data
       (buffer-string))))
@@ -1286,6 +1291,77 @@ Sets an optional HEADER."
   (message ":url %s" (codeql--result-node-url node))
   (message "-- NODE SNIP STOP ---"))
 
+;; from markdown-mode: https://github.com/jrblevin/markdown-mode/blob/master/LICENSE.md
+(defconst codeql--markdown-regex-link-inline
+  "\\(?1:!\\)?\\(?2:\\[\\)\\(?3:\\^?\\(?:\\\\\\]\\|[^]]\\)*\\|\\)\\(?4:\\]\\)\\(?5:(\\)\\s-*\\(?6:[^)]*?\\)\\(?:\\s-+\\(?7:\"[^\"]*\"\\)\\)?\\s-*\\(?8:)\\)"
+  "Regular expression for a [text](file) or an image link ![text](file).
+Group 1 matches the leading exclamation point (optional).
+Group 2 matches the opening square bracket.
+Group 3 matches the text inside the square brackets.
+Group 4 matches the closing square bracket.
+Group 5 matches the opening parenthesis.
+Group 6 matches the URL.
+Group 7 matches the title (optional).
+Group 8 matches the closing parenthesis.")
+
+;; SARIF v2.0 3.11.6
+(defun codeql--parse-sarif-links (message)
+  "Parse all [text](id) links out of a message text."
+  (let ((links
+         (with-temp-buffer
+           (insert message)
+           (goto-char (point-min))
+           (cl-loop until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
+                    collect
+                    (list (match-string 3) (string-to-number (match-string 6)))))))
+    links))
+
+(defun codeql--related-link-to-org-link (related-link related-locations)
+  "Turn a SARIF markdown link into an org link."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (cl-destructuring-bind (text id) related-link
+    ;; this expects POST processing related-locations, i.e. result nodes
+    (cl-loop for node in related-locations
+             when (= (codeql--result-node-related-id node) id)
+             do (cl-return (codeql--result-node-to-org node text)))))
+
+(defun codeql--swap-sarif-links-for-org-links (message related-locations)
+  "Parse all [text](id) links out of a message text and replace them with org links."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  ;; parent buffer
+  (let ((parent-buffer (current-buffer)))
+    ;; dst buffer
+    (with-temp-buffer
+      (let ((swap-buf (current-buffer)))
+        ;; src buffer
+        (with-temp-buffer
+          (insert message)
+          (goto-char (point-min))
+          (let ((last-point (point)))
+            (cl-loop until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
+                     do (let* ((prefix (buffer-substring-no-properties
+                                        last-point
+                                        (- (point) (length (match-string 0)))))
+                               (sarif-link-text (match-string 3))
+                               (sarif-link-id (string-to-number (match-string 6)))
+                               (org-link
+                                ;; we need to be in the query server context to resolve TRAMP links
+                                (with-current-buffer parent-buffer
+                                  (codeql--related-link-to-org-link
+                                   (list sarif-link-text sarif-link-id) related-locations))))
+                          (setq last-point (point))
+                          (save-excursion
+                            (with-current-buffer swap-buf
+                              (insert prefix (or org-link "XXXCOULDNOTRESOLVELINKXXX"))))))
+            ;; if there's any postfix left, grab that too
+            (when (< (point) (point-max))
+              (let ((postfix (buffer-substring-no-properties (point) (point-max))))
+                (save-excursion
+                  (with-current-buffer swap-buf
+                    (insert postfix))))))))
+      ;; dump our dst buffer contents
+      (buffer-string))))
+
 (defun codeql--issue-with-nodes (code-flows locations related-locations message rule-id)
   "Returns an issue node with all its associated nodes out of a SARIF result."
   (codeql--result-node-create
@@ -1300,10 +1376,10 @@ Sets an optional HEADER."
               (codeql--paths-from-thread-flows thread-flows)))
    :rule-id rule-id
    :locations
-   ;; this returns a list of location nodes
+   ;; this returns a list of location nodes, of which there should only be 1
    (codeql--nodes-from-locations locations message)
    :related-locations
-   ;; this returns a list of related-location nodes
+   ;; this returns a list of related-location nodes, these resolve message links
    (codeql--nodes-from-locations related-locations message)))
 
 (defun codeql--paths-from-thread-flows (thread-flows)
@@ -1312,7 +1388,8 @@ Sets an optional HEADER."
   (cl-loop for thread-flow across thread-flows
            for locations = (json-pointer-get thread-flow "/locations")
            ;; collect a path
-           collect (codeql--nodes-from-locations locations nil t)))
+           collect
+           (codeql--nodes-from-locations locations nil t)))
 
 (defun codeql--nodes-from-locations (locations &optional message is-thread-flow-location)
   "Returns a list of location nodes from result LOCATIONS."
@@ -1324,7 +1401,7 @@ Sets an optional HEADER."
    ;; if it's a threadFlowLocation, the actual location is nested one deeper
    with prefix             = (if is-thread-flow-location "/location"  "")
    with uri-index          = (format "%s%s" prefix "/physicalLocation/artifactLocation/uri")
-   with uri-base-id-index  = (format "%s%s" prefix"/physicalLocation/artifactLocation/uriBaseId")
+   with uri-base-id-index  = (format "%s%s" prefix "/physicalLocation/artifactLocation/uriBaseId")
    with region-index       = (format "%s%s" prefix "/physicalLocation/region")
    with message-index      = (format "%s%s" prefix "/message/text")
    for location across locations
@@ -1332,6 +1409,8 @@ Sets an optional HEADER."
    for uri                 = (json-pointer-get location uri-index)
    for uri-base-id         = (json-pointer-get location uri-base-id-index)
    for region              = (json-pointer-get location region-index)
+   ;; this only exists in relatedLocations nodes
+   for related-id          = (json-pointer-get location "/id")
    ;; collect a node in a path
    collect
    (let* ((uri (if uri-base-id
@@ -1357,6 +1436,7 @@ Sets an optional HEADER."
             :line  (json-pointer-get region "/startLine")
             :column (or (json-pointer-get region "/startColumn") 1)
             :visitable region
+            :related-id related-id
             ;; build a json alist to parse out for url
             :url `(,(cons 'uri uri)
                    ,(cons 'startLine (json-pointer-get region "/startLine"))
@@ -2159,33 +2239,35 @@ Our implementation simply returns the thing at point as a candidate."
                     (message "Found artifact contents.")
                     (cl-return t))
            ;; alrighty, let's start processing some results into org data
-           (when-let ((org-results
-                       (cl-loop for result across results
-                                with n = (length results)
-                                for i below n
-                                for message = (json-pointer-get result "/message/text")
-                                for rule-id = (json-pointer-get result "/ruleId")
-                                for code-flows = (json-pointer-get result "/codeFlows")
-                                for related-locations = (json-pointer-get result "/relatedLocations")
-                                for locations = (json-pointer-get result "/locations")
-                                do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
-                                collect
-                                ;; each result gets collected as its resulting org-data
-                                (let* ((codeql--query-results (list (codeql--issue-with-nodes
-                                                                     code-flows
-                                                                     locations
-                                                                     related-locations
-                                                                     message rule-id)))
-                                       (kind (if code-flows 'path-problem 'problem)))
-                                  (codeql--query-results-to-org codeql--query-results kind nil)))))
-             ;; save off our results so we don't have to re-render for history
-             (with-temp-buffer
-               (cl-loop for org-data in org-results do (insert org-data))
-               (let ((rendered
-                      (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
-                 ;; save off the fully rendered version for speedy re-loads
-                 (with-temp-file (format "%s.org" bqrs-path)
-                   (insert rendered))))))))
+           (if-let ((org-results
+                     (cl-loop for result across results
+                              with n = (length results)
+                              for i below n
+                              for message = (json-pointer-get result "/message/text")
+                              for rule-id = (json-pointer-get result "/ruleId")
+                              for code-flows = (json-pointer-get result "/codeFlows")
+                              for related-locations = (json-pointer-get result "/relatedLocations")
+                              for locations = (json-pointer-get result "/locations")
+                              do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
+                              collect
+                              ;; each result gets collected as its resulting org-data
+                              (let* ((codeql--query-results (list (codeql--issue-with-nodes
+                                                                   code-flows
+                                                                   locations
+                                                                   related-locations
+                                                                   message
+                                                                   rule-id)))
+                                     (kind (if code-flows 'path-problem 'problem)))
+                                (codeql--query-results-to-org codeql--query-results kind nil)))))
+               ;; save off our results so we don't have to re-render for history
+               (with-temp-buffer
+                 (cl-loop for org-data in org-results do (insert org-data))
+                 (let ((rendered
+                        (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
+                   ;; save off the fully rendered version for speedy re-loads
+                   (with-temp-file (format "%s.org" bqrs-path)
+                     (insert rendered))))
+             (message "No results found.")))))
 
        ;; fall through to raw results parsing
        (t
@@ -2797,7 +2879,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
             :description
             (lambda ()
               (codeql-query-server-active-database)))
-           ("f" "source" codeql-database-open-source-archive-file)
+           ("f" "file" codeql-database-open-source-archive-file)
            ("k" "known" codeql-database-history)]
           ["Query"
            ("r" "run" codeql-query-server-run-query)
