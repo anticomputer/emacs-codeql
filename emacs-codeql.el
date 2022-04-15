@@ -1033,7 +1033,8 @@ Provides backwards references into the AST buffer from the source file.")
   (rule-id           nil :read-only t)
   (code-flows        nil :read-only t)
   (locations         nil :read-only t)
-  (related-locations nil :read-only t))
+  (related-locations nil :read-only t)
+  (related-id        nil :read-only t))
 
 ;;; Org-mode based result rendering, so we can turn results into audit notes \o/
 
@@ -1202,10 +1203,12 @@ Sets an optional HEADER."
                                  (format "* %s [%s] %s ... %s:%s:%s"
                                          (or (codeql--result-node-mark issue) " ")
                                          (codeql--result-node-rule-id issue)
+                                         ;; swap sarif markdown links for org links if required
                                          (with-current-buffer parent-buffer
-                                           (codeql--result-node-to-org
-                                            location
-                                            (codeql--result-node-label issue)))
+                                           (if related-locations
+                                               (codeql--swap-sarif-links-for-org-links
+                                                (codeql--result-node-label issue) related-locations)
+                                             (codeql--result-node-label issue)))
                                          (with-current-buffer parent-buffer
                                            (codeql--result-node-to-org
                                             location
@@ -1226,10 +1229,7 @@ Sets an optional HEADER."
                                                (insert (codeql--org-list-from-nodes
                                                         parent-buffer
                                                         nodes
-                                                        (format "** Path #%s\n" i)))))))
-                  ;; add related locations as a top level
-                  (when related-locations
-                    (insert (codeql--org-list-from-nodes parent-buffer related-locations "** Related Locations\n"))))))
+                                                        (format "** Path #%s\n" i))))))))))
 
       ;; return final org data
       (buffer-string))))
@@ -1286,6 +1286,67 @@ Sets an optional HEADER."
   (message ":url %s" (codeql--result-node-url node))
   (message "-- NODE SNIP STOP ---"))
 
+;; from markdown-mode: https://github.com/jrblevin/markdown-mode/blob/master/LICENSE.md
+(defconst codeql--markdown-regex-link-inline
+  "\\(?1:!\\)?\\(?2:\\[\\)\\(?3:\\^?\\(?:\\\\\\]\\|[^]]\\)*\\|\\)\\(?4:\\]\\)\\(?5:(\\)\\s-*\\(?6:[^)]*?\\)\\(?:\\s-+\\(?7:\"[^\"]*\"\\)\\)?\\s-*\\(?8:)\\)"
+  "Regular expression for a [text](file) or an image link ![text](file).
+Group 1 matches the leading exclamation point (optional).
+Group 2 matches the opening square bracket.
+Group 3 matches the text inside the square brackets.
+Group 4 matches the closing square bracket.
+Group 5 matches the opening parenthesis.
+Group 6 matches the URL.
+Group 7 matches the title (optional).
+Group 8 matches the closing parenthesis.")
+
+;; SARIF v2.0 3.11.6
+(defun codeql--parse-sarif-links (message)
+  "Parse all [text](id) links out of a message text."
+  (let ((links
+         (with-temp-buffer
+           (insert message)
+           (goto-char (point-min))
+           (cl-loop until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
+                    collect
+                    (list (match-string 3) (string-to-number (match-string 6)))))))
+    links))
+
+(defun codeql--swap-sarif-links-for-org-links (message related-locations)
+  "Parse all [text](id) links out of a message text and replace them with org links."
+  (let ((swap-buf (get-buffer-create "* codeql sarif org swapper *"))
+        (parent-buffer (current-buffer)))
+    (with-temp-buffer
+      (insert message)
+      (goto-char (point-min))
+      (let ((last-point (point)))
+        (cl-loop until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
+                 do (let* ((prefix (buffer-substring-no-properties
+                                    last-point
+                                    (- (point) (length (match-string 0)))))
+                           (sarif-link-text (match-string 3))
+                           (sarif-link-id (string-to-number (match-string 6)))
+                           (org-link
+                            ;; we need to be in the query server context to resolve TRAMP links
+                            (with-current-buffer parent-buffer
+                              (codeql--related-link-to-org-link
+                               (list sarif-link-text sarif-link-id) related-locations))))
+                      (setq last-point (point))
+                      (save-excursion
+                        (with-current-buffer swap-buf
+                          (insert prefix org-link)))))))
+    (when-let ((results (with-current-buffer swap-buf (buffer-string))))
+      (kill-buffer swap-buf)
+      results)))
+
+(defun codeql--related-link-to-org-link (related-link related-locations)
+  "Turn a SARIF markdown link into an org link."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (cl-destructuring-bind (text id) related-link
+    ;; this expects POST processing related-locations, i.e. result nodes
+    (cl-loop for node in related-locations
+             when (= (codeql--result-node-related-id node) id)
+             do (cl-return (codeql--result-node-to-org node text)))))
+
 (defun codeql--issue-with-nodes (code-flows locations related-locations message rule-id)
   "Returns an issue node with all its associated nodes out of a SARIF result."
   (codeql--result-node-create
@@ -1308,48 +1369,35 @@ Sets an optional HEADER."
 
 (defun codeql--issues-with-nodes (code-flows locations related-locations message rule-id)
   "Returns issue nodes with grouped path nodes out of a SARIF result."
-  (if (> (length related-locations) 1)
-      ;; multi-message issue that might need path grouping
-      (let ((messages (split-string message "\n")))
-        (cl-assert (= (length related-locations) (length messages)) t)
-        ;; supposedly we'll always only have 1 main location for an issue, so this should work
-        (cl-loop with location-node = (car (codeql--nodes-from-locations locations))
-                 with related-nodes = (codeql--nodes-from-locations related-locations)
-                 ;; there should be as many related nodes as there are messages available
-                 for message in messages
-                 for related-node in related-nodes
-                 ;; XXX: this is an assumption, make sure it holds always
-                 ;; only grab paths that contain the current related-node for this grouping
-                 for grouped-paths =
-                 (when code-flows
-                   (cl-loop for code-flow across code-flows
-                            for thread-flows = (json-pointer-get code-flow "/threadFlows")
-                            for candidate-paths = (codeql--paths-from-thread-flows thread-flows)
-                            for paths =
-                            ;; do a horrible thing to check if related-node is in this path
-                            (cl-loop for path in candidate-paths
-                                     when
-                                     (member t
-                                             (cl-map
-                                              'list
-                                              (let ((related-node-key
-                                                     (codeql--result-node-to-org related-node "compare")))
-                                                (lambda (node)
-                                                  (string= related-node-key
-                                                           (codeql--result-node-to-org node "compare"))))
-                                              path))
-                                     collect path)
-                            when paths
-                            collect paths))
+  (if code-flows
+      (let ((path-map (make-hash-table :test #'equal))
+            ;; don't deal with the sarif message parsing crud right now
+            ;; need to do a proper iterative regex consumer and all that
+            ;; so we can map message texts to related-locations via id/index
+            (issue-message (car (split-string message "\n")))) ;; as per 3.11.3 of SARIF v2.0 spec
+        (cl-loop for code-flow across code-flows
+                 for thread-flows = (json-pointer-get code-flow "/threadFlows")
+                 for paths = (codeql--paths-from-thread-flows thread-flows)
+                 do
+                 (cl-loop for path in paths
+                          when path
+                          do
+                          (let* ((src-prefix (codeql--result-node-to-org (car path)))
+                                 (snk-prefix (codeql--result-node-to-org (car (last path))))
+                                 (path-key (format "%s::%s" src-prefix snk-prefix)))
+                            (puthash path-key (append (gethash path-key path-map) (list (list path))) path-map))))
+        ;; now create an issue for each grouping under issue-message
+        (cl-loop for path-key in (hash-table-keys path-map)
                  collect
                  (codeql--result-node-create
-                  :label message
+                  :label issue-message
                   :mark "≔"
-                  :code-flows grouped-paths
+                  :code-flows (gethash path-key path-map)
                   :rule-id rule-id
-                  :locations (list location-node)
-                  :related-locations (list related-node))))
-    ;; <= 1 related locations, no grouping required
+                  :locations (codeql--nodes-from-locations locations)
+                  ;; XXX
+                  :related-locations (codeql--nodes-from-locations related-locations))))
+    ;; nothing special required, just do a single issue with associated paths
     (list (codeql--issue-with-nodes code-flows locations related-locations message rule-id))))
 
 (defun codeql--paths-from-thread-flows (thread-flows)
@@ -1358,7 +1406,8 @@ Sets an optional HEADER."
   (cl-loop for thread-flow across thread-flows
            for locations = (json-pointer-get thread-flow "/locations")
            ;; collect a path
-           collect (codeql--nodes-from-locations locations nil t)))
+           collect
+           (codeql--nodes-from-locations locations nil t)))
 
 (defun codeql--nodes-from-locations (locations &optional message is-thread-flow-location)
   "Returns a list of location nodes from result LOCATIONS."
@@ -1370,7 +1419,7 @@ Sets an optional HEADER."
    ;; if it's a threadFlowLocation, the actual location is nested one deeper
    with prefix             = (if is-thread-flow-location "/location"  "")
    with uri-index          = (format "%s%s" prefix "/physicalLocation/artifactLocation/uri")
-   with uri-base-id-index  = (format "%s%s" prefix"/physicalLocation/artifactLocation/uriBaseId")
+   with uri-base-id-index  = (format "%s%s" prefix "/physicalLocation/artifactLocation/uriBaseId")
    with region-index       = (format "%s%s" prefix "/physicalLocation/region")
    with message-index      = (format "%s%s" prefix "/message/text")
    for location across locations
@@ -1378,6 +1427,8 @@ Sets an optional HEADER."
    for uri                 = (json-pointer-get location uri-index)
    for uri-base-id         = (json-pointer-get location uri-base-id-index)
    for region              = (json-pointer-get location region-index)
+   ;; this only exists in relatedLocations nodes
+   for related-id          = (json-pointer-get location "/id")
    ;; collect a node in a path
    collect
    (let* ((uri (if uri-base-id
@@ -1403,6 +1454,7 @@ Sets an optional HEADER."
             :line  (json-pointer-get region "/startLine")
             :column (or (json-pointer-get region "/startColumn") 1)
             :visitable region
+            :related-id related-id
             ;; build a json alist to parse out for url
             :url `(,(cons 'uri uri)
                    ,(cons 'startLine (json-pointer-get region "/startLine"))
@@ -2845,7 +2897,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
             :description
             (lambda ()
               (codeql-query-server-active-database)))
-           ("f" "source" codeql-database-open-source-archive-file)
+           ("f" "file" codeql-database-open-source-archive-file)
            ("k" "known" codeql-database-history)]
           ["Query"
            ("r" "run" codeql-query-server-run-query)
