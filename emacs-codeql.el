@@ -1347,7 +1347,7 @@ Group 8 matches the closing parenthesis.")
                           (setq last-point (point))
                           (save-excursion
                             (with-current-buffer swap-buf
-                              (insert prefix org-link)))))
+                              (insert prefix (or org-link "XXXCOULDNOTRESOLVELINKXXX"))))))
             ;; if there's any postfix left, grab that too
             (when (< (point) (point-max))
               (let ((postfix (buffer-substring-no-properties (point) (point-max))))
@@ -1379,7 +1379,7 @@ Group 8 matches the closing parenthesis.")
 
 (defun codeql--issues-with-nodes (code-flows locations related-locations message rule-id)
   "Returns issue nodes with grouped path nodes out of a SARIF result."
-  (if code-flows
+  (if (and nil code-flows)
       (let ((path-map (make-hash-table :test #'equal))
             ;; don't deal with the sarif message parsing crud right now
             ;; need to do a proper iterative regex consumer and all that
