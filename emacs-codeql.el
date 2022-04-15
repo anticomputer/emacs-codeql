@@ -1311,33 +1311,6 @@ Group 8 matches the closing parenthesis.")
                     (list (match-string 3) (string-to-number (match-string 6)))))))
     links))
 
-(defun codeql--swap-sarif-links-for-org-links (message related-locations)
-  "Parse all [text](id) links out of a message text and replace them with org links."
-  (let ((swap-buf (get-buffer-create "* codeql sarif org swapper *"))
-        (parent-buffer (current-buffer)))
-    (with-temp-buffer
-      (insert message)
-      (goto-char (point-min))
-      (let ((last-point (point)))
-        (cl-loop until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
-                 do (let* ((prefix (buffer-substring-no-properties
-                                    last-point
-                                    (- (point) (length (match-string 0)))))
-                           (sarif-link-text (match-string 3))
-                           (sarif-link-id (string-to-number (match-string 6)))
-                           (org-link
-                            ;; we need to be in the query server context to resolve TRAMP links
-                            (with-current-buffer parent-buffer
-                              (codeql--related-link-to-org-link
-                               (list sarif-link-text sarif-link-id) related-locations))))
-                      (setq last-point (point))
-                      (save-excursion
-                        (with-current-buffer swap-buf
-                          (insert prefix org-link)))))))
-    (when-let ((results (with-current-buffer swap-buf (buffer-string))))
-      (kill-buffer swap-buf)
-      results)))
-
 (defun codeql--related-link-to-org-link (related-link related-locations)
   "Turn a SARIF markdown link into an org link."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -1346,6 +1319,37 @@ Group 8 matches the closing parenthesis.")
     (cl-loop for node in related-locations
              when (= (codeql--result-node-related-id node) id)
              do (cl-return (codeql--result-node-to-org node text)))))
+
+(defun codeql--swap-sarif-links-for-org-links (message related-locations)
+  "Parse all [text](id) links out of a message text and replace them with org links."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  ;; parent buffer
+  (let ((parent-buffer (current-buffer)))
+    ;; dst buffer
+    (with-temp-buffer
+      (let ((swap-buf (current-buffer)))
+        ;; src buffer
+        (with-temp-buffer
+          (insert message)
+          (goto-char (point-min))
+          (let ((last-point (point)))
+            (cl-loop until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
+                     do (let* ((prefix (buffer-substring-no-properties
+                                        last-point
+                                        (- (point) (length (match-string 0)))))
+                               (sarif-link-text (match-string 3))
+                               (sarif-link-id (string-to-number (match-string 6)))
+                               (org-link
+                                ;; we need to be in the query server context to resolve TRAMP links
+                                (with-current-buffer parent-buffer
+                                  (codeql--related-link-to-org-link
+                                   (list sarif-link-text sarif-link-id) related-locations))))
+                          (setq last-point (point))
+                          (save-excursion
+                            (with-current-buffer swap-buf
+                              (insert prefix org-link))))))))
+      ;; dump our dst buffer contents
+      (buffer-string))))
 
 (defun codeql--issue-with-nodes (code-flows locations related-locations message rule-id)
   "Returns an issue node with all its associated nodes out of a SARIF result."
