@@ -805,7 +805,12 @@ Provides backwards references into the AST buffer from the source file.")
 (defun codeql--bqrs-to-sarif (bqrs-path id kind &optional max-paths)
   (cl-assert (and id kind) t)
   (let* ((sarif-file (concat bqrs-path ".sarif"))
-         (cmd (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s -- %s"
+         ;; XXX: TODO check out --column-kind a bit deeper as well
+         ;; it's important to enable --no-group-results, otherwise we get piled
+         ;; on messages for a single result which complicates SARIF parsing
+         ;; also note that our --max-paths is set to 10 by default, as to 4 in
+         ;; the codeql extension, which is why we show more results
+         (cmd (format "%s bqrs interpret -v --log-to-stderr -t=id=%s -t=kind=%s --output=%s --format=sarif-latest --max-paths=%s --no-group-results -- %s"
                       (codeql--cli-buffer-local-as-string) id kind
                       (codeql--tramp-unwrap sarif-file) (or max-paths codeql--path-problem-max-paths)
                       (codeql--tramp-unwrap bqrs-path))))
@@ -1371,44 +1376,11 @@ Group 8 matches the closing parenthesis.")
               (codeql--paths-from-thread-flows thread-flows)))
    :rule-id rule-id
    :locations
-   ;; this returns a list of location nodes
+   ;; this returns a list of location nodes, of which there should only be 1
    (codeql--nodes-from-locations locations message)
    :related-locations
-   ;; this returns a list of related-location nodes
+   ;; this returns a list of related-location nodes, these resolve message links
    (codeql--nodes-from-locations related-locations message)))
-
-(defun codeql--issues-with-nodes (code-flows locations related-locations message rule-id)
-  "Returns issue nodes with grouped path nodes out of a SARIF result."
-  (if (and nil code-flows)
-      (let ((path-map (make-hash-table :test #'equal))
-            ;; don't deal with the sarif message parsing crud right now
-            ;; need to do a proper iterative regex consumer and all that
-            ;; so we can map message texts to related-locations via id/index
-            (issue-message (car (split-string message "\n")))) ;; as per 3.11.3 of SARIF v2.0 spec
-        (cl-loop for code-flow across code-flows
-                 for thread-flows = (json-pointer-get code-flow "/threadFlows")
-                 for paths = (codeql--paths-from-thread-flows thread-flows)
-                 do
-                 (cl-loop for path in paths
-                          when path
-                          do
-                          (let* ((src-prefix (codeql--result-node-to-org (car path)))
-                                 (snk-prefix (codeql--result-node-to-org (car (last path))))
-                                 (path-key (format "%s::%s" src-prefix snk-prefix)))
-                            (puthash path-key (append (gethash path-key path-map) (list (list path))) path-map))))
-        ;; now create an issue for each grouping under issue-message
-        (cl-loop for path-key in (hash-table-keys path-map)
-                 collect
-                 (codeql--result-node-create
-                  :label issue-message
-                  :mark "≔"
-                  :code-flows (gethash path-key path-map)
-                  :rule-id rule-id
-                  :locations (codeql--nodes-from-locations locations)
-                  ;; XXX
-                  :related-locations (codeql--nodes-from-locations related-locations))))
-    ;; nothing special required, just do a single issue with associated paths
-    (list (codeql--issue-with-nodes code-flows locations related-locations message rule-id))))
 
 (defun codeql--paths-from-thread-flows (thread-flows)
   "Returns all paths out of THREAD-FLOWS."
@@ -2279,12 +2251,12 @@ Our implementation simply returns the thing at point as a candidate."
                               do (message "Rendering SARIF results ... %s/%s" (1+ i) n)
                               collect
                               ;; each result gets collected as its resulting org-data
-                              (let* ((codeql--query-results (codeql--issues-with-nodes
-                                                             code-flows
-                                                             locations
-                                                             related-locations
-                                                             message
-                                                             rule-id))
+                              (let* ((codeql--query-results (list (codeql--issue-with-nodes
+                                                                   code-flows
+                                                                   locations
+                                                                   related-locations
+                                                                   message
+                                                                   rule-id)))
                                      (kind (if code-flows 'path-problem 'problem)))
                                 (codeql--query-results-to-org codeql--query-results kind nil)))))
                ;; save off our results so we don't have to re-render for history
