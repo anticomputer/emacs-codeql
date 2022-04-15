@@ -1347,7 +1347,13 @@ Group 8 matches the closing parenthesis.")
                           (setq last-point (point))
                           (save-excursion
                             (with-current-buffer swap-buf
-                              (insert prefix org-link))))))))
+                              (insert prefix org-link)))))
+            ;; if there's any postfix left, grab that too
+            (when (< (point) (point-max))
+              (let ((postfix (buffer-substring-no-properties (point) (point-max))))
+                (save-excursion
+                  (with-current-buffer swap-buf
+                    (insert postfix))))))))
       ;; dump our dst buffer contents
       (buffer-string))))
 
