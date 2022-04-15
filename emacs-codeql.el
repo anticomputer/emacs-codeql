@@ -176,7 +176,7 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA."
   :type 'boolean
   :group 'emacs-codeql)
 
-(defcustom codeql-state-dir "~/.config/codeql/emacs"
+(defcustom codeql-state-dir "~/.emacs-codeql"
   "Base directory for codeql emacs state maintenance.
 
 It is important to keep this as a ~/relative path so that it will resolve both
@@ -531,6 +531,21 @@ If optional MARKER, return a marker instead"
           (list codeql-state-dir
                 codeql-results-dir
                 codeql-tmp-dir)))
+
+(defun codeql-clear-state-dirs (clear-dirs)
+  "Clear out storage directories."
+  (interactive (list
+                (yes-or-no-p
+                 (format "Clear out %s and %s?"
+                         codeql-results-dir
+                         codeql-tmp-dir))))
+  (when (and clear-dirs
+             (codeql--file-exists-p codeql-results-dir)
+             (codeql--file-exists-p codeql-tmp-dir))
+    (when (not (directory-empty-p codeql-results-dir))
+      (cl-assert (= 0 (shell-command (format  "rm -v %s/*" codeql-results-dir))) t))
+    (when (not (directory-empty-p codeql-tmp-dir))
+      (cl-assert (= 0 (shell-command (format "rm -v %s/*" codeql-tmp-dir)))))))
 
 ;;; Request and notification handling
 
