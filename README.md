@@ -142,18 +142,30 @@ In a nutshell:
 1. Install cask. 
 2. run `cask install` for my fork (`git clone --branch anticomputer-ql git@github.com:/anticomputer/tree-sitter-langs-1`) of `tree-sitter-langs` from its project root. 
 3. Download a copy of the [binary release](https://github.com/tree-sitter/tree-sitter/releases/tag/v0.19.5) of `tree-sitter` and put it in your `PATH` somewhere. `tree-sitter` version <0.20 is required due to a breaking change in >= 0.20, I use 0.19.5.
-4. Compile the QL support using `script/compile ql` from `tree-sitter-langs` project root (note: this also has nodejs as a dependency).
+4. Compile the QL support using `script/compile ql` from `tree-sitter-langs` project root, note that this also has `nodejs` as a dependency.
 
-If you're on a Mac, you'll also need to set `EMACSDATA` and `EMACSLOADPATH` correctly, e.g when using MacPorts Emacs.app:
+If you're on a Mac, you'll also need to set `EMACSDATA` and `EMACSLOADPATH` correctly and symlink `emacs` into your `PATH` somewhere, e.g when using MacPorts Emacs.app:
 
 ```
+ln -s /Applications/MacPorts/EmacsMac.app/Contents/MacOS/Emacs ~/bin/emacs
 EMACSDATA=/Applications/MacPorts/EmacsMac.app/Contents/Resources/etc EMACSLOADPATH=/Applications/MacPorts/EmacsMac.app/Contents/Resources/lisp cask install
 EMACSDATA=/Applications/MacPorts/EmacsMac.app/Contents/Resources/etc EMACSLOADPATH=/Applications/MacPorts/EmacsMac.app/Contents/Resources/lisp script/compile ql
 ```
 
-On m1 Macs, you may be able to use the x64 tree-sitter 0.19.5 binary to compile the artifact, but I have not verified this. If this is not the case, you'll have to compile tree-sitter 0.19.5 yourself.
+On M1 Macs, if you don't want to use the pre-packaged artifact, you're able to use the x86_64 `tree-sitter` 0.19.5 binary thanks to Rosetta, but you'll have to compile the `ql.dylib` yourself out of the `tree-sitter-langs` fork with an arch-appropriate compiler. 
 
-After building the QL artifact(s) for the architectures and platforms you need to support, you'll want to grab `bin/ql.*` and move those into `~/.emacs.d/elpa/tree-sitter-langs-*/bin/` and restart emacs. 
+To prepare the pre-packaged artifact on an M1 Mac I use the following:
+
+```
+$ cd ~/tree-sitter-langs-fork/repos/ql
+$ tree-sitter generate
+$ gcc -o ql.dylib --shared src/parser.c -I./src
+$ cp ql.dylib ~/.emacs.d/elpa/tree-sitter-langs*/bin/
+```
+
+Alternatively you can compile `tree-sitter` 0.19.5 from scratch on an M1 mac by checking out the v0.19.5 tag of https://github.com/tree-sitter/tree-sitter and using `cargo` to build the `tree-sitter` cli, e.g. `cd cli && cargo install --path .`, which will get you an M1 build of `tree-sitter` for the proper architecture, but personally I just compile `ql.dylib` myself after using the x86_64 `tree-sitter` binary for `tree-sitter generate`. You can find more suggestions and alternatives for dealing with M1 Macs in https://github.com/emacs-tree-sitter/elisp-tree-sitter/issues/88
+
+After building the QL artifact(s) for the architectures and platforms you need to support, you'll want to grab `bin/ql.*` and move those into `~/.emacs.d/elpa/tree-sitter-langs*/bin/` and restart emacs. 
 
 QL syntax highlighting and indentation should now work fine.
 
