@@ -58,7 +58,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
   ;; see: https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/
   ;; this option is here to provide you with load/search precedence control
   ;; these paths will have precedence over the config file search paths
-  (setq codeql-search-paths '("./"))
+  (setq codeql-search-paths '("./")))
 ```
 
 ### Alternative install method
@@ -142,7 +142,7 @@ In a nutshell:
 1. Install cask. 
 2. run `cask install` for my fork (`git clone --branch anticomputer-ql git@github.com:/anticomputer/tree-sitter-langs-1`) of `tree-sitter-langs` from its project root. 
 3. Download a copy of the [binary release](https://github.com/tree-sitter/tree-sitter/releases/tag/v0.19.5) of `tree-sitter` and put it in your `PATH` somewhere. `tree-sitter` version <0.20 is required due to a breaking change in >= 0.20, I use 0.19.5.
-4. Compile the QL support using `script/compile ql` from `tree-sitter-langs` project root.
+4. Compile the QL support using `script/compile ql` from `tree-sitter-langs` project root (note: this also has nodejs as a dependency).
 
 If you're on a Mac, you'll also need to set `EMACSDATA` and `EMACSLOADPATH` correctly, e.g when using MacPorts Emacs.app:
 
