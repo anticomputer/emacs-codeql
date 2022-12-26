@@ -1475,7 +1475,7 @@ Group 8 matches the closing parenthesis.")
         :javascript  "javascript/ql/src/%s.ql"
         :python      "python/ql/src/%s.ql"
         :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
-        :ruby        "ruby/ql/src/ide-contextual-queries/%s.ql"
+        :ruby        "ruby/ql/lib/ide-contextual-queries/%s.ql"
         :go          "ql/lib/%s.ql")
   "A format list for finding templated queries by name")
 
