@@ -4,7 +4,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 
 ![screenshot](img/codeql-dot-el.png?raw=true "emacs-codeql")
 
-## Features 
+## Features
 
 - [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) based syntax highlighting and indentation for the CodeQL query language
 - Query execution
@@ -23,7 +23,10 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 
 ## Requirements
 
-- Emacs 27.1+
+- Emacs 29.1+ (built-in tree-sitter)
+  - transient
+  - projectile
+- Emacs 27.1+ (external tree-sitter)
   - transient
   - tree-sitter
   - tree-sitter-langs
@@ -31,11 +34,37 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
   - aggressive-indent
   - projectile
   - eglot
-- CodeQL CLI 2.8.3+ 
+- CodeQL CLI 2.8.3+
 
 ## Installation
 
-### Recommended install method
+### Recommended install method (Emacs 29 and above)
+
+Emacs 29.1+ comes with `use-package`, `tree-sitter` and `eglot` built-in, which simplifies `meacs-codeql` setup. A [quelpa](https://github.com/quelpa/quelpa) for non-MELPA package installs configuration may look like:
+
+```elisp
+(use-package emacs-codeql
+  :quelpa
+  (emacs-codeql :repo "anticomputer/emacs-codeql"
+		:fetcher github-ssh
+		:branch "main"
+		:files (:defaults "bin"))
+  :demand t
+  :init
+  (setq codeql-transient-binding "C-c q")
+  (setq codeql-configure-eglot-lsp t)
+  (setq codeql-configure-projectile t)
+  :config
+  ;; you should configure your standard search paths through a ~/.config/codeql/config entry
+  ;; e.g. "--search-path /full/path/codeql:/full/path/codeql-go"
+  ;; see: https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/
+  ;; this option is here to provide you with load/search precedence control
+  ;; these paths will have precedence over the config file search paths
+  (setq codeql-search-paths '("./")))
+```
+
+
+### Recommended install method (Emacs 28 and below)
 
 `use-package` + [quelpa](https://github.com/quelpa/quelpa) for non-MELPA package installs:
 
@@ -47,7 +76,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 		:branch "main"
 		:files (:defaults "bin"))
   :after tree-sitter-langs
-  :demand
+  :demand t
   :init
   (setq codeql-transient-binding "C-c q")
   (setq codeql-configure-eglot-lsp t)
@@ -63,7 +92,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 
 ### Alternative install method
 
-Alternatively, you can clone this repository and place it into your emacs `load-path`, you'll want to ensure that you have all required dependencies available, including the most recent MELPA version of eglot.
+Alternatively, you can clone this repository and place it into your emacs `load-path`, you'll want to ensure that you have all required dependencies available, including the most recent MELPA versions of any required packages.
 
 ```elisp
 ;; initialization options
@@ -118,7 +147,7 @@ If unavailable, `emacs-codeql` will fall back to its normal executable path expe
 
 #### Custom search paths
 
-We recommend you use [`.config/codeql/config`](https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/) for your codeql cli search path configurations. This allows for more straightforward standard search path deconfliction between local and remote query contexts. 
+We recommend you use [`.config/codeql/config`](https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/) for your codeql cli search path configurations. This allows for more straightforward standard search path deconfliction between local and remote query contexts.
 
 If you used the provided workspace init script it has already configured the paths for you.
 
@@ -133,14 +162,31 @@ The `codeql-search-paths` variable in `emacs-codeql` exists purely to provide yo
 
 ### Optional: build custom tree-sitter QL artifacts
 
+#### Emacs 29 and newer
+
+On Emacs 29 and newer, with `tree-sitter` support enabled, you can use the `treesit-install-language-grammar` function to install the required ql artifact. You can either invoke `M-x treesit-install-language-grammar RET` and provide https://github.com/tree-sitter/tree-sitter-ql interactively, or programmatically you can run:
+
+```elisp
+(let ((treesit-language-source-alist
+             '((ql . ("https://github.com/tree-sitter/tree-sitter-ql"
+                      nil
+                      nil
+                      nil)))))
+        (treesit-install-language-grammar 'ql))
+```
+
+On first use `emacs-codeql` will offer to run the above snippet if the ql tree-sitter grammar artifact is not yet installed on your system. Note that this require a working C compiler (e.g. gcc) is present in your `PATH`.
+
+#### Emacs 28 and older
+
 If this package does not contain the required `tree-sitter-langs` artifacts for your system, or you simply do not trust the binary artifacts I provided, you will have to build your own.
 
-Follow the [tree-sitter-langs documentation](https://github.com/anticomputer/tree-sitter-langs-1) for detailed instructions on how to build such an artifact. 
+Follow the [tree-sitter-langs documentation](https://github.com/anticomputer/tree-sitter-langs-1) for detailed instructions on how to build such an artifact.
 
 In a nutshell:
 
-1. Install cask. 
-2. run `cask install` for my fork (`git clone --branch anticomputer-ql git@github.com:/anticomputer/tree-sitter-langs-1`) of `tree-sitter-langs` from its project root. 
+1. Install cask.
+2. run `cask install` for my fork (`git clone --branch anticomputer-ql git@github.com:/anticomputer/tree-sitter-langs-1`) of `tree-sitter-langs` from its project root.
 3. Download a copy of the [binary release](https://github.com/tree-sitter/tree-sitter/releases/tag/v0.19.5) of `tree-sitter` and put it in your `PATH` somewhere. `tree-sitter` version <0.20 is required due to a breaking change in >= 0.20, I use 0.19.5.
 4. Compile the QL support using `script/compile ql` from `tree-sitter-langs` project root, note that this also has `nodejs` as a dependency.
 
@@ -152,7 +198,7 @@ EMACSDATA=/Applications/MacPorts/EmacsMac.app/Contents/Resources/etc EMACSLOADPA
 EMACSDATA=/Applications/MacPorts/EmacsMac.app/Contents/Resources/etc EMACSLOADPATH=/Applications/MacPorts/EmacsMac.app/Contents/Resources/lisp script/compile ql
 ```
 
-On M1 Macs, if you don't want to use the pre-packaged artifact, you're able to use the x86_64 `tree-sitter` 0.19.5 binary thanks to Rosetta, but you'll have to compile the `ql.dylib` yourself out of the `tree-sitter-langs` fork with an arch-appropriate compiler. 
+On M1 Macs, if you don't want to use the pre-packaged artifact, you're able to use the x86_64 `tree-sitter` 0.19.5 binary thanks to Rosetta, but you'll have to compile the `ql.dylib` yourself out of the `tree-sitter-langs` fork with an arch-appropriate compiler.
 
 To prepare the pre-packaged artifact on an M1 Mac I use the following:
 
@@ -165,7 +211,7 @@ $ cp ql.dylib ~/.emacs.d/elpa/tree-sitter-langs*/bin/
 
 Alternatively you can compile `tree-sitter` 0.19.5 from scratch on an M1 mac by checking out the v0.19.5 tag of https://github.com/tree-sitter/tree-sitter and using `cargo` to build the `tree-sitter` cli, e.g. `cd cli && cargo install --path .`, which will get you an M1 build of `tree-sitter` for the proper architecture, but personally I just compile `ql.dylib` myself after using the x86_64 `tree-sitter` binary for `tree-sitter generate`. You can find more suggestions and alternatives for dealing with M1 Macs in https://github.com/emacs-tree-sitter/elisp-tree-sitter/issues/88
 
-After building the QL artifact(s) for the architectures and platforms you need to support, you'll want to grab `bin/ql.*` and move those into `~/.emacs.d/elpa/tree-sitter-langs*/bin/` and restart emacs. 
+After building the QL artifact(s) for the architectures and platforms you need to support, you'll want to grab `bin/ql.*` and move those into `~/.emacs.d/elpa/tree-sitter-langs*/bin/` and restart emacs.
 
 QL syntax highlighting and indentation should now work fine.
 
@@ -199,11 +245,16 @@ Edit a `.ql` or `.qll` file inside a `qlpack.yml` project root (e.g. a `codeql-c
 
 #### Syntax highlighting and indentation
 
-`emacs-codeql` includes a `tree-sitter` based major-mode that provides indentation and syntax highlighting for `.ql` and `.qll` files. It relies on `aggressive-indent` for continuous indentation, as is common practice in structural editing modes.
+`emacs-codeql` includes a `tree-sitter` based major-mode that provides indentation and syntax highlighting for `.ql` and `.qll` files. On Emacs 28 and below, it relies on `aggressive-indent` for continuous indentation, as is common practice in structural editing modes. On Emacs 29 and above, it employs a more conservative electric indent based indentation approach.
 
-`emacs-codeql` relies on a custom version of `tree-sitter-langs` that includes `tree-sitter` support for QL. This support has not been upstreamed as of 03-27-2022, but package recipes for custom forks are provided above. 
+On Emacs 28 and below, `emacs-codeql` relies on a custom version of `tree-sitter-langs` that includes `tree-sitter` support for QL. This support has not been upstreamed as of 03-27-2022, but package recipes for custom forks are provided above.
 
-`emacs-codeql` also packages QL `tree-sitter` artifacts for Linux x64 and MacOS x64 systems, which may preclude the need to build your own artifacts. If your system is compatible with the existing artifacts, you are not required to install the custom forks of `tree-sitter`, `tree-sitter-langs` and `tree-sitter-indent` and can just use the existing MELPA versions.
+On Emacs 28 and below, `emacs-codeql` also packages QL `tree-sitter` artifacts for Linux x64 and MacOS x64 systems, which may preclude the need to build your own artifacts. If your system is compatible with the existing artifacts, you are not required to install the custom forks of `tree-sitter`, `tree-sitter-langs` and `tree-sitter-indent` and can just use the existing MELPA versions.
+
+On Emacs 29 and above you do not have to worry about any of this, as all the required `tree-sitter` support is included in the default build of Emacs and building the required artifacts is handled by standard Emacs 29+ functionalities.
+
+On Emacs 29 and above `emacs-codeql` also comes with an Emacs 29+ specific version of its CodeQL major mode `ql-tree-sitter-builtin.el` that relies only on the included tree-sitter libraries and API.
+
 
 #### Database selection
 
@@ -213,7 +264,7 @@ Database selection is buffer-local per query file and you can run as many concur
 
 `emacs-codeql` buffer-local approach means you can work on e.g. a `cpp` and `javascript` project concurrently, and you can an arbitrary amount of concurrent results buffers as you toggle between your query buffers.
 
-You can find existing databases for a ton of open source projects on [LGTM.com](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#obtaining-databases-from-lgtm-com), or you can [create your own](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#creating-codeql-databases) using the codeql cli. 
+You can find existing databases for a ton of open source projects on [LGTM.com](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#obtaining-databases-from-lgtm-com), or you can [create your own](https://codeql.github.com/docs/codeql-cli/creating-codeql-databases/#creating-codeql-databases) using the codeql cli.
 
 #### Run a query or quick evaluate query regions
 
@@ -231,11 +282,11 @@ kind: `problem` and `path-problem` are rendered as org trees, raw tuple results 
 
 Results contain source code locations in the form of org links, which can be visited with the normal org mode operations for link handling (e.g. `org-open-at-point`)
 
-`emacs-codeql` will resolve file paths into the project snapshot source code archive included with the database archive. 
+`emacs-codeql` will resolve file paths into the project snapshot source code archive included with the database archive.
 
 ### Database source archive Xref support
 
-`emacs-codeql` automatically retrieves references and definitions for database source archive files that are opened from a result buffer org link. It achieves this by registering a custom org-link handler for a `codeql:` link type which then performs a ridiculous elisp ritual to trick emacs into thinking it actually has xref support for these files specifically. 
+`emacs-codeql` automatically retrieves references and definitions for database source archive files that are opened from a result buffer org link. It achieves this by registering a custom org-link handler for a `codeql:` link type which then performs a ridiculous elisp ritual to trick emacs into thinking it actually has xref support for these files specifically.
 
 `emacs-codeql` rudely overrides the default xref bindings for any existing major-mode that might normally take precedence for the type of source file that is opened, but only for files opened from a result buffer. But not to worry, these overrides are buffer-local only, and won't tamper with any other source files sharing the same major-mode that are NOT inside a codeql database source archive.
 
@@ -251,7 +302,7 @@ It is left as a matter of user preference whether to invoke `codeql-xref-backend
 
 ### AST Viewer
 
-Just like the vscode extension, `emacs-codeql` lets you browse the AST of a database source archive file. Similar to the other results buffers, the AST is rendered as an org-mode tree. You can invoke the AST viewer with `M-x RET codeql-view-ast RET` for a database source archive file. 
+Just like the vscode extension, `emacs-codeql` lets you browse the AST of a database source archive file. Similar to the other results buffers, the AST is rendered as an org-mode tree. You can invoke the AST viewer with `M-x RET codeql-view-ast RET` for a database source archive file.
 
 ![screenshot](img/codeql-ast-viewer.png?raw=true "emacs-codeql")
 
@@ -259,9 +310,9 @@ There is AST xref support bound to `M->` in any database source file that also h
 
 ### Commands
 
-All query server interaction for your query buffer routes via an intuitive `transient` interface. You can configure which keybinding is associated with starting this interface via the `codeql-transient-binding` variable. 
+All query server interaction for your query buffer routes via an intuitive `transient` interface. You can configure which keybinding is associated with starting this interface via the `codeql-transient-binding` variable.
 
-This interface is self-documenting and allows you to start/stop query servers, select databases, run queries, and fetch query history. 
+This interface is self-documenting and allows you to start/stop query servers, select databases, run queries, and fetch query history.
 
 Otherwise hidden features such as max path depths for path queries are unobtrusively surfaced to the user.
 
@@ -271,7 +322,7 @@ Otherwise hidden features such as max path depths for path queries are unobtrusi
 
 ![screenshot](img/codeql-over-tramp.png?raw=true "emacs-codeql")
 
-On emacs 28.0.92, TRAMP version (2.5.2) provides a fairly trouble free experience on Linux even with the LSP enabled, at least in my experience. On emacs 27.2, with the older version of TRAMP, I've had less luck with the LSP experience, but the query server performs fine over TRAMP. `emacs-codeql` will ask for confirmation to enable the LSP when it detects it is running in a remote context. When in doubt, keep it disabled.
+On emacs 28.1+, TRAMP version (2.5.2+) provides a fairly trouble free experience on Linux even with the LSP enabled, at least in my experience. On emacs 27.2, with the older version of TRAMP, I've had less luck with the LSP experience, but the query server performs fine over TRAMP. `emacs-codeql` will ask for confirmation to enable the LSP when it detects it is running in a remote context. When in doubt, keep it disabled.
 
 For optimal performance over TRAMP, especially if you're expecting very large (multiple thousands) of result sets, I recommend the following settings:
 
@@ -285,7 +336,7 @@ For optimal performance over TRAMP, especially if you're expecting very large (m
       (format "%s\\|%s"
               vc-ignore-dir-regexp
               tramp-file-name-regexp))
-              
+
 ;; shush tramp, shush
 (setq tramp-verbose 1)
 
@@ -295,43 +346,13 @@ For optimal performance over TRAMP, especially if you're expecting very large (m
 
 ### GitHub Codespaces access over TRAMP
 
-I use the following config to enable convenient GitHub Codespaces access from emacs over TRAMP:
+I recommend using my colleague's `codespaces.el` [package](https://github.com/patrickt/codespaces.el), which provides convenient TRAMP support for GitHub codespaces.
 
-
-```elisp
-;; add gh codespaces ssh method support for tramp editing
-;; e.g. C-x C-f /ghcs:codespace-name:/path/to/file :)
-(let ((ghcs (assoc "ghcs" tramp-methods))
-      (ghcs-methods '((tramp-login-program "gh")
-                      (tramp-login-args (("codespace") ("ssh") ("-c") ("%h")))
-                      (tramp-remote-shell "/bin/sh")
-                      (tramp-remote-shell-login ("-l"))
-                      (tramp-remote-shell-args ("-c")))))
-  ;; just for debugging the methods
-  (if ghcs (setcdr ghcs ghcs-methods)
-    (push (cons "ghcs" ghcs-methods) tramp-methods)))
-
-;; provide codespace name completion for ghcs tramp method
-;; use C-j if you use ivy to kick in host completion
-(defun my/tramp-parse-codespaces (&optional nop)
-  (let ((results '())
-        (codespaces
-         (split-string
-          (shell-command-to-string
-           "gh codespace list --json name -q '.[].name'"))))
-    (dolist (name codespaces)
-      ;; tramp completion expects a list of (user host)
-      (add-to-list 'results (list nil name)))
-    results))
-
-(tramp-set-completion-function "ghcs" '((my/tramp-parse-codespaces "")))
-```
-
-With the completion function in place, you can just TAB to get a list of your available Codespaces when opening a `/ghcs:` prefixed file.
+With this package in place, you can just TAB to get a list of your available Codespaces when opening a `/ghcs:` prefixed file.
 
 ### Language Server Protocol
 
-`emacs-codeql` performs very well with `eglot`. Due to the codeql language server relying on `workspaceFolders` support, `eglot 20220326.2143` or newer is required from MELPA, which includes the basic project-root based `workspaceFolders` introduced in: https://github.com/joaotavora/eglot/commit/9eb9353fdc15c91a66ef8f4e53e18b22aa0870cd
+`emacs-codeql` performs very well with `eglot`. Due to the codeql language server relying on `workspaceFolders` support, `eglot 20220326.2143` or newer is required from MELPA, which includes the basic project-root based `workspaceFolders` introduced in: https://github.com/joaotavora/eglot/commit/9eb9353fdc15c91a66ef8f4e53e18b22aa0870cd and a compatible version of `eglot` ships with Emacs 29+ by default.
 
 Projectile and eglot configurations are included in `emacs-codeql` and controlled by the `codeql-configure-eglot-lsp` and `codeql-configure-projectile` variables, respectively.
 
@@ -345,7 +366,7 @@ While the recommended LSP client, `eglot`, does function over TRAMP, running LSP
 
 The codeql query server, while also running jsonrpc over stdio, is not tied to a direct editor feedback loop, so it is a much more pleasant experience over TRAMP, so all local functionality is enabled and available.
 
-Having said that, on emacs 28.0.92, TRAMP version (2.5.2) provides a fairly trouble free experience on Linux at least even with LSP enabled remotely.
+Having said that, on emacs 28.1+, TRAMP version (2.5.2+) provides a fairly trouble free experience on Linux at least even with LSP enabled remotely.
 
 ## Known Quirks
 
@@ -365,7 +386,7 @@ When in doubt `C-g` is your friend. If you'd like to see what's happening under 
 
 The code has some reentrancy issues currently which makes the TRAMP support a little flaky if you're spamming a ton of operations rapidly. I'm working on resolving these for a more stable experience, as well as looking into how to improve the LSP experience over TRAMP as well on older versions of emacs and TRAMP.
 
-If you see `error in process filter: peculiar error: "Forbidden reentrant call of Tramp"` on TRAMP 2.5.2, I'm aware, and looking into resolving the reentrancy where possible. TRAMP is very chatty, so we need some better synchronization primitives to prevent launching into TRAMP operations while it's already in the middle of e.g. performing a file stat. 
+If you see `error in process filter: peculiar error: "Forbidden reentrant call of Tramp"` on TRAMP 2.5.2, I'm aware, and looking into resolving the reentrancy where possible. TRAMP is very chatty, so we need some better synchronization primitives to prevent launching into TRAMP operations while it's already in the middle of e.g. performing a file stat.
 
 In the meantime, you should be able to just repeat whatever action was interrupted by the error without causing any issues.
 
@@ -381,7 +402,7 @@ In the meantime, you should be able to just repeat whatever action was interrupt
 
 This package was heavily inspired by, and in some cases directly ported from, [Alvaro Muñoz](https://github.com/pwntester)'s [codeql.nvim](https://github.com/pwntester/codeql.nvim) I'd like to thank him for dragging me into a continuously good natured editor arms race. He solved most of the hard problems in lua, and a lot of this package stands on the shoulders of his prior art. I also stole his `README.md` in an attempt at tongue in cheek comedy. I know it took me two years to actually start this project, but here we are sir :P
 
-A lot of the fundamental ideas behind this package were first implemented by [Esben Sparre Andreasen](https://github.com/esbena). Esben is a seasoned CodeQL engineer and his deep QL knowledge and early work on emacs codeql support were a big inspiration to finally revive this effort. While this package no longer resembles Esben's original (private) major mode, the very first iteration of `emacs-codeql` was heavily drafted on top of his work, and his original design ideas such as the org-mode based result rendering are very much carried forward in this implementation. 
+A lot of the fundamental ideas behind this package were first implemented by [Esben Sparre Andreasen](https://github.com/esbena). Esben is a seasoned CodeQL engineer and his deep QL knowledge and early work on emacs codeql support were a big inspiration to finally revive this effort. While this package no longer resembles Esben's original (private) major mode, the very first iteration of `emacs-codeql` was heavily drafted on top of his work, and his original design ideas such as the org-mode based result rendering are very much carried forward in this implementation.
 
 I'd also like to acknowledge the [eglot](https://github.com/joaotavora/eglot) project and its maintainers. The eglot project has solved many of the problems that pop up when dealing with asynchronous jsonrpc over stdio in a synchronous emacs world. Their various tips and tricks, sprinkled throughout the `eglot` codebase as well as the `jsonrpc` library itself, were consistently the answers to most of the blocking issues that popped up while writing `emacs-codeql`, especially when dealing with TRAMP quirks. They were also very responsive in getting the `workspaceFolders` support required by the codeql langserver in place.
 
