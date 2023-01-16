@@ -26,13 +26,17 @@
 
 ;; This package is a very early version of modern CodeQL support for emacs.
 ;;
-;; It operates two major components:
+;; It operates three major components:
 ;;
-;; ql-tree-sitter.el
+;; ql-tree-sitter.el || ql-tree-sitter-builtin.el
 ;;
 ;; A tree-sitter based QL highlighting and indentation mode. It requires
 ;; emacs-tree-sitter, tree-sitter-langs, tree-sitter-indent, tree-sitter-hl
-;; and aggressive-indent to function.
+;; and aggressive-indent to function for the non-native tree-sitter support.
+;;
+;; If you are on emacs 29 and have compiled with tree-sitter support you
+;; can alternatively use ql-tree-sitter-builtin.el which provides a native
+;; tree-sitter ql mode for emacs 29 and above.
 ;;
 ;; emacs-codeql.el
 ;;
@@ -96,33 +100,52 @@
 (require 'ol)
 
 ;; bundled
-(require 'ql-tree-sitter)
 (require 'json-pointer)
 
 ;; not part of emacs
 (require 'transient)
 
 ;;; place our artifacts if they don't exist yet (very hacky!)
-(when t
-  (require 'tree-sitter-langs))
-(declare-function tree-sitter-langs--bin-dir "ext:tree-sitter-langs")
-(unless
-    (member t
-            (cl-map 'list
-                    (lambda (f)
-                      (file-exists-p (concat (tree-sitter-langs--bin-dir) f)))
-                    '("/ql.dylib" "/ql.so")))
-  (if (yes-or-no-p "tree-sitter-langs ql support not found, install artifacts now?")
-      (let* ((arch (string-trim-right (shell-command-to-string "uname -m")))
-             (sys (cond ((eq system-type 'gnu/linux) "linux")
-                        ((eq system-type 'darwin) "darwin")
-                        (t (error "Your platform is currently not supported."))))
-             (cmd (format "cp %s/bin/%s/%s/ql.* %s"
-                          (file-name-directory (or load-file-name (buffer-file-name)))
-                          sys arch (tree-sitter-langs--bin-dir))))
-        (message "Placing tree-sitter artifacts with %s" cmd)
-        (cl-assert (eql 0 (shell-command cmd))))
-    (error "emacs-codeql does not work without tree-sitter-langs support.")))
+(cond
+ ((and (>= emacs-major-version 29) (treesit-available-p))
+  (message "Attempting to use builtin tree-sitter support for emacs-codeql.")
+  (unless (treesit-ready-p 'ql)
+    (when (yes-or-no-p "tree-sitter ql support not found, install artifacts now?")
+      (let ((treesit-language-source-alist
+             '(ql . ("https://github.com/tree-sitter/tree-sitter-ql"
+                     nil
+                     nil
+                     nil))))
+        (treesit-install-language-grammar 'ql)))))
+ (t
+  ;; fall back old external tree-sitter mode support
+  (when t
+    (require 'tree-sitter-langs))
+  (declare-function tree-sitter-langs--bin-dir "ext:tree-sitter-langs")
+  (unless
+      (member t
+              (cl-map 'list
+                      (lambda (f)
+                        (file-exists-p (concat (tree-sitter-langs--bin-dir) f)))
+                      '("/ql.dylib" "/ql.so")))
+    (if (yes-or-no-p "tree-sitter-langs ql support not found, install artifacts now?")
+        (let* ((arch (string-trim-right (shell-command-to-string "uname -m")))
+               (sys (cond ((eq system-type 'gnu/linux) "linux")
+                          ((eq system-type 'darwin) "darwin")
+                          (t (error "Your platform is currently not supported."))))
+               (cmd (format "cp %s/bin/%s/%s/ql.* %s"
+                            (file-name-directory (or load-file-name (buffer-file-name)))
+                            sys arch (tree-sitter-langs--bin-dir))))
+          (message "Placing tree-sitter artifacts with %s" cmd)
+          (cl-assert (eql 0 (shell-command cmd))))
+      (error "emacs-codeql does not work without tree-sitter-langs support.")))))
+
+;; pick a tree-sitter
+(if (and (fboundp 'treesit-ready-p) (treesit-ready-p 'ql))
+    ;; use the built-in tree-sitter
+    (require 'ql-tree-sitter-builtin)
+  ;; fall back to the external tree-sitter support
+  (require 'ql-tree-sitter))
 
 ;;; global user configuration options
 
