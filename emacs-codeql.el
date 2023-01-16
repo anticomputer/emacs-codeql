@@ -107,7 +107,9 @@
 
 ;;; place our artifacts if they don't exist yet (very hacky!)
 (cond
- ((and (>= emacs-major-version 29) (treesit-available-p))
+ ((and (>= emacs-major-version 29)
+       (require 'treesit nil t)
+       (treesit-available-p))
   (message "Attempting to use builtin tree-sitter support for emacs-codeql.")
   (unless (treesit-ready-p 'ql)
     (when (yes-or-no-p "tree-sitter ql support not found, install artifacts now?")
