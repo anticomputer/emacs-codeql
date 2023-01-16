@@ -40,7 +40,7 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 
 ### Recommended install method (Emacs 29 and above)
 
-Emacs 29.1+ comes with `use-package`, `tree-sitter` and `eglot` built-in, which simplifies `meacs-codeql` setup. A [quelpa](https://github.com/quelpa/quelpa) for non-MELPA package installs configuration may look like:
+Emacs 29.1+ comes with `use-package`, `tree-sitter` and `eglot` built-in, which simplifies `emacs-codeql` setup considerably. A [quelpa](https://github.com/quelpa/quelpa) for non-MELPA package installs configuration may look like:
 
 ```elisp
 (use-package emacs-codeql
