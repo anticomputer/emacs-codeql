@@ -175,7 +175,7 @@ On Emacs 29 and newer, with `tree-sitter` support enabled, you can use the `tree
         (treesit-install-language-grammar 'ql))
 ```
 
-On first use `emacs-codeql` will offer to run the above snippet if the ql tree-sitter grammar artifact is not yet installed on your system. Note that this require a working C compiler (e.g. gcc) is present in your `PATH`.
+On first use `emacs-codeql` will offer to run the above snippet if the ql tree-sitter grammar artifact is not yet installed on your system. Note that this requires a working C compiler (e.g. gcc) is present in your `PATH`.
 
 #### Emacs 28 and older
 
