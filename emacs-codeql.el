@@ -395,12 +395,15 @@ Leave nil for default.")
           ;; turn eglot on if local or we really want it remote
           (eglot-ensure)
         ;; set default-directory to a sane alternative if not
-        (setq default-directory (file-name-directory (buffer-file-name))))
+        (if (buffer-file-name)
+            (setq default-directory (file-name-directory (buffer-file-name)))
+          (message "Strange buffer-file-name: %s" (buffer-file-name))))
 
     ;; no LSP for us due to error
     (error (progn
              (message "Ignoring failed LSP initialization and plowing ahead!")
-             (setq default-directory (file-name-directory (buffer-file-name))))))
+             (when (buffer-file-name)
+               (setq default-directory (file-name-directory (buffer-file-name)))))))
 
   ;; now that default-directory points where it should, resolve our search paths
   (message "Resolving search paths from configuration.")

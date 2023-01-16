@@ -1,11 +1,19 @@
 ;;; ql-tree-sitter-mode.el --- tree-sitter support for QL -*- lexical-binding: t -*-
 
-;; Author     : Bas Alberts <bas@anti.computer>
-;; Maintainer : Bas Alberts <bas@anti.computer>
-;; Created    : December 2022
-;; Keywords   : ql languages tree-sitter
+;; Author: Bas Alberts <bas@anti.computer>
+;; Maintainer: Bas Alberts <bas@anti.computer>
+;; Created: January 2023
+;; Keywords: ql languages tree-sitter
 
-;; this mode is packaged with https://github.com/anticomputer/emacs-codeql
+;;; Commentary
+
+;; This mode is packaged with https://github.com/anticomputer/emacs-codeql
+;; and requires you to install the ql tree-sitter grammar via the
+;; `treesit-install-language-grammar' function, when prompted you can
+;; point it at https://github.com/tree-sitter/tree-sitter-ql and accept
+;; the default values to build and install the ql tree-sitter artifact.
+
+;;; Code
 
 (require 'treesit)
 (eval-when-compile (require 'cl-lib))
@@ -13,10 +21,6 @@
 (eval-when-compile (require 'seq))
 
 (declare-function treesit-parser-create "treesit.c")
-(declare-function treesit-induce-sparse-tree "treesit.c")
-(declare-function treesit-node-child "treesit.c")
-(declare-function treesit-node-start "treesit.c")
-(declare-function treesit-node-type "treesit.c")
 
 (defcustom ql-tree-sitter-mode-indent-offset 2
   "Number of spaces for each indentation step in `ql-tree-sitter-mode'."
@@ -111,10 +115,6 @@
      (charpred (className) @font-lock-function-name-face))
 
    :language 'ql
-   :feature 'variable-builtin
-   '([(this) (super)] @font-lock-variable-name-face)
-
-   :language 'ql
    :feature 'type-builtin
    '(["boolean" "float" "int" "date" "string"] @font-lock-type-face)
 
@@ -126,9 +126,11 @@
 
    :language 'ql
    :feature 'variable
-   '((importModuleExpr qualName: (simpleId) @font-lock-variable-name-face)
-     ;;(qualModuleExpr name: (simpleId) @font-lock-variable-name-face)
-     (varName) @font-lock-variable-name-face)
+   '((varName) @font-lock-variable-name-face)
+
+   :language 'ql
+   :feature 'variable-builtin
+   '([(this) (super)] @font-lock-variable-name-face)
 
    :language 'ql
    :feature 'boolean
@@ -136,7 +138,8 @@
 
    :language 'ql
    :feature 'namespace
-   '((moduleExpr (simpleId) @font-lock-variable-name-face)
+   '((importModuleExpr qualName: (simpleId) @font-lock-variable-name-face)
+     (moduleExpr (simpleId) @font-lock-variable-name-face)
      (module name: (moduleName) @font-lock-variable-name-face))
 
    ;; these are all non-standard font lock faces, only used in level 4
@@ -160,30 +163,22 @@
 
 (defvar ql-tree-sitter-mode--indent-rules
   '((ql
-     ;; these are applied in order so put e.g. if/then/else outdents first
      ((node-is ")") parent-bol 0)
      ((node-is "]") parent-bol 0)
      ((node-is "}") parent-bol 0)
      ((node-is "then") parent-bol 0)
      ((node-is "else") parent-bol 0)
-     ((node-is "where") parent-bol 0)
-     ((node-is "select") parent-bol 0)
-     ((parent-is "select") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "varDecl") parent-bol 0)
+     ((parent-is "dataclass") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "if_term") parent-bol ql-tree-sitter-mode-indent-offset)
      ((parent-is "line_comment") parent-bol 0)
      ((parent-is "block_comment") parent-bol 1)
      ((parent-is "qldoc") parent-bol 1)
-     ((parent-is "par_expr") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "dataclass") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "charpred") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "classlessPredicate") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "memberPredicate") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "quantified") parent-bol ql-tree-sitter-mode-indent-offset)
      ((parent-is "body") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "if_term") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "comp_term") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "add_expr") parent-bol ql-tree-sitter-mode-indent-offset)
-     ((parent-is "orderBy") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "par_expr") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "quantifier") parent-bol ql-tree-sitter-mode-indent-offset)
+     ;; ((parent-is "comp_term") parent-bol ql-tree-sitter-mode-indent-offset)
+     ;; ((parent-is "add_expr") parent-bol ql-tree-sitter-mode-indent-offset)
+     ;; ((parent-is "orderBy") parent-bol ql-tree-sitter-mode-indent-offset)
      ;; no node
      (no-node parent-bol 0)))
   "Tree-sitter indent rules for `ql-tree-sitter-mode'.")
@@ -239,9 +234,11 @@
                    punctuation-bracket
                    punctuation-delimiter)))
     ;; navigation
-    (setq-local treesit-defun-type-regexp (regexp-opt '("classlessPredicate"
-                                                        "memberPredicate"
-                                                        "dataclass")))
+    (setq-local treesit-defun-type-regexp
+                (regexp-opt '("dataclass"
+                              "classlessPredicate"
+                              "memberPredicate"
+                              "charpred")))
 
     ;; TODO: imenu crud
 
