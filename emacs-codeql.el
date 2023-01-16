@@ -112,10 +112,10 @@
   (unless (treesit-ready-p 'ql)
     (when (yes-or-no-p "tree-sitter ql support not found, install artifacts now?")
       (let ((treesit-language-source-alist
-             '(ql . ("https://github.com/tree-sitter/tree-sitter-ql"
-                     nil
-                     nil
-                     nil))))
+             '((ql . ("https://github.com/tree-sitter/tree-sitter-ql"
+                      nil
+                      nil
+                      nil)))))
         (treesit-install-language-grammar 'ql)))))
  (t
   ;; fall back old external tree-sitter mode support
