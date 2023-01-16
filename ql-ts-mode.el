@@ -1,4 +1,4 @@
-;;; ql-ts-mode.el --- tree-sitter support for QL -*- lexical-binding: t -*-
+;;; ql-tree-sitter-mode.el --- tree-sitter support for QL -*- lexical-binding: t -*-
 
 ;; Author     : Bas Alberts <bas@anti.computer>
 ;; Maintainer : Bas Alberts <bas@anti.computer>
@@ -18,14 +18,14 @@
 (declare-function treesit-node-start "treesit.c")
 (declare-function treesit-node-type "treesit.c")
 
-(defcustom ql-ts-mode-indent-offset 2
-  "Number of spaces for each indentation step in `ql-ts-mode'."
+(defcustom ql-tree-sitter-mode-indent-offset 2
+  "Number of spaces for each indentation step in `ql-tree-sitter-mode'."
   :version "29.1"
   :type 'integer
   :safe 'integerp
   :group 'ql)
 
-(defvar ql-ts-mode--syntax-table
+(defvar ql-tree-sitter-mode--syntax-table
   (let ((table (make-syntax-table)))
     ;; comment / uncomment courtesy of @esbena
     (modify-syntax-entry ?_ "w" table)
@@ -36,10 +36,10 @@
     (modify-syntax-entry ?* ". 23b" table)
     (modify-syntax-entry ?@ "_" table)
     table)
-  "Syntax table for `ql-ts-mode'.")
+  "Syntax table for `ql-tree-sitter-mode'.")
 
 ;; highlights.scm
-(defvar ql-ts-mode--font-lock-settings
+(defvar ql-tree-sitter-mode--font-lock-settings
   (treesit-font-lock-rules
 
    :language 'ql
@@ -158,7 +158,7 @@
    :feature 'punctuation-delimiter
    '(["," "|"] @font-lock-delimiter-face)))
 
-(defvar ql-ts-mode--indent-rules
+(defvar ql-tree-sitter-mode--indent-rules
   '((ql
      ;; these are applied in order so put e.g. if/then/else outdents first
      ((node-is ")") parent-bol 0)
@@ -168,43 +168,43 @@
      ((node-is "else") parent-bol 0)
      ((node-is "where") parent-bol 0)
      ((node-is "select") parent-bol 0)
-     ((parent-is "select") parent-bol ql-ts-mode-indent-offset)
+     ((parent-is "select") parent-bol ql-tree-sitter-mode-indent-offset)
      ((parent-is "varDecl") parent-bol 0)
      ((parent-is "line_comment") parent-bol 0)
      ((parent-is "block_comment") parent-bol 1)
      ((parent-is "qldoc") parent-bol 1)
-     ((parent-is "par_expr") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "dataclass") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "charpred") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "classlessPredicate") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "memberPredicate") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "quantified") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "body") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "if_term") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "comp_term") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "add_expr") parent-bol ql-ts-mode-indent-offset)
-     ((parent-is "orderBy") parent-bol ql-ts-mode-indent-offset)
+     ((parent-is "par_expr") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "dataclass") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "charpred") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "classlessPredicate") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "memberPredicate") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "quantified") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "body") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "if_term") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "comp_term") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "add_expr") parent-bol ql-tree-sitter-mode-indent-offset)
+     ((parent-is "orderBy") parent-bol ql-tree-sitter-mode-indent-offset)
      ;; no node
      (no-node parent-bol 0)))
-  "Tree-sitter indent rules for `ql-ts-mode'.")
+  "Tree-sitter indent rules for `ql-tree-sitter-mode'.")
 
 ;;;###autoload
-(add-to-list 'auto-mode-alist '("\\.qll?\\'" . ql-ts-mode))
+(add-to-list 'auto-mode-alist '("\\.qll?\\'" . ql-tree-sitter-mode))
 
 ;;;###autoload
-(define-derived-mode ql-ts-mode prog-mode "CodeQL"
+(define-derived-mode ql-tree-sitter-mode prog-mode "CodeQL"
   "Major mode for editing CodeQL files, powered by tree-sitter.
 \\{ql-tree-sitter-mode-map}"
   :group 'ql
-  :syntax-table ql-ts-mode--syntax-table
+  :syntax-table ql-tree-sitter-mode--syntax-table
 
   (when (treesit-ready-p 'ql)
     (treesit-parser-create 'ql)
 
     ;; https://github.com/github/codeql/blob/main/docs/ql-style-guide.md
-    (setq-local tab-width ql-ts-mode-indent-offset)
+    (setq-local tab-width ql-tree-sitter-mode-indent-offset)
     (setq-local indent-tabs-mode nil)
-    (setq-local treesit-simple-indent-rules ql-ts-mode--indent-rules)
+    (setq-local treesit-simple-indent-rules ql-tree-sitter-mode--indent-rules)
 
     (setq-local comment-start "// ")
     (setq-local comment-start-skip "\\(?://+\\|/\\*+\\)\\s *")
@@ -214,7 +214,7 @@
     (setq-local electric-indent-chars
                 (append "{}()" electric-indent-chars))
 
-    (setq-local treesit-font-lock-settings ql-ts-mode--font-lock-settings)
+    (setq-local treesit-font-lock-settings ql-tree-sitter-mode--font-lock-settings)
     ;; 4 feature levels required, 3 is the default
     (setq-local treesit-font-lock-feature-list
                 '((comment)
@@ -247,6 +247,6 @@
 
     (treesit-major-mode-setup)))
 
-(provide 'ql-ts-mode)
+(provide 'ql-tree-sitter-builtin)
 
-;;; ql-ts-mode.el ends here
+;;; ql-tree-sitter-mode.el ends here
