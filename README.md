@@ -112,6 +112,32 @@ Alternatively, you can clone this repository and place it into your emacs `load-
 (setq codeql-search-paths '("./"))
 ```
 
+Users of `straight.el` can use the below `use-package` declaration instead:
+
+```elisp
+(use-package emacs-codeql
+  :straight
+  (emacs-codeql :type git
+		:host github
+		:repo "anticomputer/emacs-codeql"
+		:branch "main")
+  :after tree-sitter-langs
+  :demand t
+  :init
+  (setq codeql-transient-binding "C-c q")
+  (setq codeql-configure-eglot-lsp t)
+  (setq codeql-configure-projectile t)
+  :config
+  ;; you should configure your standard search paths through a ~/.config/codeql/config entry
+  ;; e.g. "--search-path /full/path/codeql:/full/path/codeql-go"
+  ;; see: https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/
+  ;; this option is here to provide you with load/search precedence control
+  ;; these paths will have precedence over the config file search paths
+  (setq codeql-search-paths '("./")))
+```
+
+If you are using [`straight.el`](https://github.com/radian-software/straight.el), you will likely face an issue preparing the tree-sitter-lang artifact, as the path from which `emacs-codeql` copies the appropriate artifact to the `tree-sitter-langs--bin-dir` may not be correct. In this case, you can easily workaround this issue by simply manually copying the `$HOME/.emacs.d/straight/repos/emacs-codeql//bin/{your-system-type}/{your-arch}/ql.*`to the directory that `tree-sitter-langs--bin-dir` points to.
+
 ### Getting Started: the recommended way
 
 The quickest way into painfree CodeQL development is to use the CodeQL starter workspace and the gh cli extension to manage your toolchain dependencies. To get started:
