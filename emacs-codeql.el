@@ -107,22 +107,23 @@
 
 ;;; place our artifacts if they don't exist yet (very hacky!)
 (cond
+ ;; emacs 29+
  ((and (>= emacs-major-version 29)
        (require 'treesit nil t)
        (treesit-available-p))
   (message "Attempting to use builtin tree-sitter support for emacs-codeql.")
   (unless (treesit-ready-p 'ql)
-    (when (yes-or-no-p "tree-sitter ql support not found, install artifacts now?")
-      (let ((treesit-language-source-alist
-             '((ql . ("https://github.com/tree-sitter/tree-sitter-ql"
-                      nil
-                      nil
-                      nil)))))
-        (treesit-install-language-grammar 'ql)))))
- (t
-  ;; fall back old external tree-sitter mode support
-  (when t
-    (require 'tree-sitter-langs))
+    (if (yes-or-no-p "tree-sitter ql support not found, install artifacts now?")
+        (let ((treesit-language-source-alist
+               '((ql . ("https://github.com/tree-sitter/tree-sitter-ql"
+                        nil
+                        nil
+                        nil)))))
+          (treesit-install-language-grammar 'ql))
+      (error "emacs-codeql does not work without tree-sitter-langs support."))))
+ ;; emacs 28-
+ ((and (<= emacs-major-version 28)
+       (require 'tree-sitter-langs nil t))
   (declare-function tree-sitter-langs--bin-dir "ext:tree-sitter-langs")
   (unless
       (member t
@@ -140,7 +141,9 @@
                             sys arch (tree-sitter-langs--bin-dir))))
           (message "Placing tree-sitter artifacts with %s" cmd)
           (cl-assert (eql 0 (shell-command cmd))))
-      (error "emacs-codeql does not work without tree-sitter-langs support.")))))
+      (error "emacs-codeql does not work without tree-sitter-langs support."))))
+ ;; bail out if we can't figure out tree-sitter support
+ (t (error "emacs-codeql is unable to determine tree-sitter support strategy ... aborting!")))
 
 ;; pick a tree-sitter
 (if (and (fboundp 'treesit-ready-p) (treesit-ready-p 'ql))
