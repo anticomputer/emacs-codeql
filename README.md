@@ -130,11 +130,7 @@ To get started:
 
 5. Create a new CodeQL pack using `gh codeql pack init yourname/my-queries`. This will create a directory named `my-queries`. If you intend to eventually publish your queries, then `yourname` should map to a GitHub organization or user account (e.g. `anticomputer/my-queries`).
 
-6. From inside your newly created pack directory, add any CodeQL dependencies that your query pack needs using `gh codeql pack add`. For example, if we're writing a Ruby query pack and want to add the latest Ruby support, we would run `gh codeql pack add codeql/ruby-all` inside our newly created `my-queries` pack. This operation will (re)install any declared dependencies.
-
-If we want to specify a specific version of the `codeql/ruby-all` dependency, say `0.4.2`, we can further qualify the dependency with `gh codeql pack add codeql/ruby-all@0.4.2`.
-
-Note: If you are working with a pre-existing `qlpack.yml` that has existing dependencies you can install those dependencies with `gh codeql pack install`.
+6. From inside your newly created pack directory, add any CodeQL dependencies that your query pack needs using `gh codeql pack add`. For example, if we're writing a Ruby query pack and want to add the latest Ruby support, we would run `gh codeql pack add codeql/ruby-all` inside our newly created `my-queries` pack. This operation will (re)install any declared dependencies. If we want to specify a specific version of the `codeql/ruby-all` dependency, say `0.4.2`, we can further qualify the dependency with `gh codeql pack add codeql/ruby-all@0.4.2`. Note that if you are working with a pre-existing `qlpack.yml` that has existing dependencies you can install those dependencies with `gh codeql pack install`.
 
 7. Open `my-queries/my-first-query.ql` from your `emacs-codeql` enabled Emacs, and off you go!
 
