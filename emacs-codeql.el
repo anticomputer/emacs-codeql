@@ -165,7 +165,7 @@
   :group 'emacs-codeql)
 
 (defcustom codeql-query-server "query-server"
-  "Which query-server to use, query-server2 is experimental!"
+  "Which query-server to use."
   :type 'string
   :group 'emacs-codeql)
 
