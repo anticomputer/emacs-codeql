@@ -387,18 +387,6 @@ Leave nil for default.")
   ;; ensure we were able to resolve _A_ path for the codeql cli local|remote execution
   (cl-assert codeql--cli-buffer-local t)
 
-  ;; ensure we have the eglot LSP client setup if folks want it
-  ;; catch any errors so we don't fail just because the LSP fails
-  (condition-case nil
-      (when (and codeql-configure-eglot-lsp
-                 (or (and (file-remote-p (buffer-file-name))
-                          (yes-or-no-p "[WARNING] Do you want to use LSP remotely? This can be very slow!"))
-                     (not (file-remote-p (buffer-file-name)))))
-        ;; turn eglot on if local or we really want it remote
-        (eglot-ensure))
-    ;; no LSP for us due to error
-    (error (message "Ignoring failed LSP initialization and plowing ahead!")))
-
   ;; always set default-directory to project root
   (setq default-directory
         (projectile-project-root
@@ -422,7 +410,18 @@ Leave nil for default.")
     (cl-loop for pack-paths in qlpack-paths do
              (message "Adding search paths for qlpack: %s" pack-paths)
              (setq codeql--search-paths-buffer-local
-                   (append pack-paths codeql--search-paths-buffer-local)))))
+                   (append pack-paths codeql--search-paths-buffer-local))))
+
+  ;; now that we have all our search paths, let's try and start up our LSP server
+  (condition-case nil
+      (when (and codeql-configure-eglot-lsp
+                 (or (and (file-remote-p (buffer-file-name))
+                          (yes-or-no-p "[WARNING] Do you want to use LSP remotely? This can be very slow!"))
+                     (not (file-remote-p (buffer-file-name)))))
+        ;; turn eglot on if local or we really want it remote
+        (eglot-ensure))
+    ;; no LSP for us due to error
+    (error (message "Ignoring failed LSP initialization and plowing ahead!"))))
 
 ;; add a hook that sets up all the things we need to be available in the buffer-local context
 (add-hook 'ql-tree-sitter-mode-hook #'codeql--buffer-local-init-hook)
@@ -785,18 +784,31 @@ Provides backwards references into the AST buffer from the source file.")
   ;; nil indicates there was an error resolving these
   (and codeql--library-path codeql--dbscheme))
 
-(defun codeql--resolve-qlpack-paths (path)
-  "Resolve qlpack paths from PATH and add them to our search path."
-  ;;(cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (interactive)
+;; XXX: currently unused
+(defun codeql--resolve-library-paths (dir)
+  "Resolve library paths for DIR."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --dir=%s"
+                      (codeql--cli-buffer-local-as-string) dir))
+         (json (codeql--shell-command-to-string cmd)))
+    (when json
+      (condition-case nil
+          (cl-destructuring-bind (&key libraryPath &allow-other-keys)
+              (json-parse-string json :object-type 'plist)
+            ;; this is a vector
+            libraryPath)
+        (error (progn (message "error parsing json: %s" json) nil))))))
+
+(defun codeql--resolve-qlpack-paths (dir)
+  "Resolve qlpack paths from DIR."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let* ((cmd (format "%s resolve qlpacks -v --log-to-stderr --format=json --search-path=%s"
-                      (codeql--cli-buffer-local-as-string) path))
+                      (codeql--cli-buffer-local-as-string) dir))
          (json (codeql--shell-command-to-string cmd)))
     (when json
       (condition-case nil
           (let* ((qlpacks (json-parse-string json :object-type 'alist)))
-            (cl-loop for qlpack in qlpacks
-                     collect
+            (cl-loop for qlpack in qlpacks collect
                      (mapcar #'identity (cdr qlpack))))
         (error (progn (message "error parsing json: %s" json) nil))))))
 
