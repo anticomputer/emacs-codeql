@@ -3,7 +3,7 @@
 ;; Author: Bas Alberts
 ;; Maintainer: Bas Alberts <bas@anti.computer>
 ;; Version: 0.2.0
-;; Package-Requires: ((emacs "27.1") (seq "2.23") (transient "0.3.7") (jsonrpc "1.0.14") (tree-sitter "0.18.0") (tree-sitter-langs "0.11.4") (tree-sitter-indent) (aggressive-indent) (eglot) (projectile) (org))
+;; Package-Requires: ((emacs "27.1") (seq "2.23") (transient "0.3.7") (jsonrpc "1.0.14") (tree-sitter "0.18.0") (tree-sitter-langs "0.11.4") (tree-sitter-indent) (aggressive-indent) (eglot) (org))
 ;; Homepage: https://github.com/anticomputer/codeql.el
 ;; Keywords: dev
 
@@ -42,8 +42,7 @@
 ;;
 ;; A utility layer that enhances ql-tree-sitter-mode with modern codeql
 ;; ide extension functionality. It requires transient and json-pointer
-;; to function in a basic capacity but projectile and eglot are highly
-;; recommended for an optimal UX.
+;; to function in a basic capacity but eglot is highly recommended.
 ;;
 ;; While ql-tree-sitter.el does function without emacs-codeql.el, the two
 ;; are assumed to operate in tandem and considered part of the same package.
@@ -98,6 +97,7 @@
 (require 'url-parse)
 (require 'org)
 (require 'ol)
+(require 'files)
 
 ;; bundled
 (require 'json-pointer)
@@ -204,11 +204,6 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA."
   :type 'boolean
   :group 'emacs-codeql)
 
-(defcustom codeql-configure-projectile t
-  "Configure project by default."
-  :type 'boolean
-  :group 'emacs-codeql)
-
 (defcustom codeql-state-dir "~/.emacs-codeql"
   "Base directory for codeql emacs state maintenance.
 
@@ -305,7 +300,7 @@ Leave nil for default.")
 (defun codeql--search-paths-from-emacs-config ()
   "Grab search paths from our emacs configuration."
   (cl-loop for path in codeql-search-paths
-           unless (codeql--file-exists-p path) do
+           unless (and path (codeql--file-exists-p path)) do
            (error (format "Non-existing search path in configuration: %s" path))
            collect (let ((local-search-path
                           (codeql--tramp-unwrap
@@ -317,19 +312,13 @@ Leave nil for default.")
   "Return any currently configured codeql cli search paths."
   (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
-;; Projectile configuration
-
-(when codeql-configure-projectile
-  (require 'projectile)
-  ;; use projectile for project root management
-  (projectile-register-project-type
-   'ql '("qlpack.yml" "codeql-pack.yml")
-   ;; TODO: fill these in with codeql commands
-   ;; :compile ""
-   ;; :test ""
-   ;; :run ""
-   ;; :test-suffix ""
-   :project-file "qlpack.yml"))
+(defun codeql--find-project-root ()
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode))
+  (let ((root
+         (or (locate-dominating-file (buffer-file-name) "qlpack.yml")
+             (locate-dominating-file (buffer-file-name) "codeql-pack.yml"))))
+    (when root (message "Found project root: %s" root)
+          root)))
 
 ;; Eglot configuration
 
@@ -389,8 +378,9 @@ Leave nil for default.")
 
   ;; always set default-directory to project root
   (setq default-directory
-        (projectile-project-root
-         (file-name-directory (buffer-file-name))))
+        (or (codeql--find-project-root)
+            ;; if we can't find a project root, assume cwd is project root
+            (file-name-directory (buffer-file-name))))
 
   ;; now that default-directory points where it should, resolve our search paths
   (message "Resolving search paths from configuration.")
@@ -398,7 +388,7 @@ Leave nil for default.")
         (append
          ;; emacs-codeql configs always have precedence
          (codeql--search-paths-from-emacs-config)
-         ;; only add new paths that weren't already configured to prevent double-hits
+         ;; only add new paths that weren't already configured to prevent double-hits, this can be nil
          (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
                   for path in config-paths
                   unless (member path codeql-search-paths)
@@ -406,11 +396,19 @@ Leave nil for default.")
 
   ;; and add any qlpack search paths as well
   (message "Resolving search paths from qlpack in PATH.")
-  (let ((qlpack-paths (codeql--resolve-qlpack-paths default-directory)))
+  (let ((qlpack-paths (codeql--resolve-qlpack-paths
+                       (codeql--tramp-unwrap
+                        (expand-file-name
+                         (codeql--tramp-wrap default-directory))))))
     (cl-loop for pack-paths in qlpack-paths do
-             (message "Adding search paths for qlpack: %s" pack-paths)
+             ;;(message "Adding search paths for qlpack: %s" pack-paths)
              (setq codeql--search-paths-buffer-local
                    (append pack-paths codeql--search-paths-buffer-local))))
+
+  ;; dedupe and remove nil from search paths
+  (setq codeql--search-paths-buffer-local
+        (delq nil (delete-dups
+                   codeql--search-paths-buffer-local)))
 
   ;; now that we have all our search paths, let's try and start up our LSP server
   (condition-case nil
@@ -1775,8 +1773,10 @@ the local buffer when appropriate, i.e. when the buffer is a file inside
 a codeql database source archive."
   (interactive)
   (when codeql-enable-xrefs
-    (unless (and (file-remote-p (buffer-file-name))
-                 (not codeql-enable-remote-xrefs))
+    (unless (and
+             (buffer-file-name)
+             (file-remote-p (buffer-file-name))
+             (not codeql-enable-remote-xrefs))
       (if (and (gethash (buffer-file-name) codeql--references-cache)
                (gethash (buffer-file-name) codeql--definitions-cache))
           (progn
