@@ -1080,7 +1080,7 @@ Provides backwards references into the AST buffer from the source file.")
              (codeql--database-extract-source-archive-zip database-path))))
        :error-fn
        (jsonrpc-lambda (&key code message data &allow-other-keys)
-         (message "Error %s: %s %s" code message data))
+         (message "Error %s: %s\n%s\n" code message data))
        ;; synchronize to only register when deregister has completed in global state
        :deferred :evaluation/registerDatabases))
      ;; query-server2
@@ -1124,7 +1124,7 @@ Provides backwards references into the AST buffer from the source file.")
              (codeql--database-extract-source-archive-zip database-path))))
        :error-fn
        (jsonrpc-lambda (&key code message data &allow-other-keys)
-         (message "Error %s: %s %s" code message data))
+         (message "Error %s: %s\n%s\n" code message data))
        ;; synchronize to only register when deregister has completed in global state
        :deferred :evaluation/registerDatabases)))))
 
@@ -1156,7 +1156,7 @@ Provides backwards references into the AST buffer from the source file.")
            (message "Deregistered: %s" database-dataset-folder))))
      :error-fn
      (jsonrpc-lambda (&key code message data &allow-other-keys)
-       (message "Error %s: %s %s" code message data))
+       (message "Error %s: %s\n%s\n" code message data))
      :deferred :evaluation/deregisterDatabases))
    ;; query-server2
    (cond ((string= codeql-query-server "query-server2")
@@ -1177,7 +1177,7 @@ Provides backwards references into the AST buffer from the source file.")
                  (message "Deregistered: %s" database-dataset-folder))))
            :error-fn
            (jsonrpc-lambda (&key code message data &allow-other-keys)
-             (message "Error %s: %s %s" code message data))
+             (message "Error %s: %s\n%s\n" code message data))
            :deferred :evaluation/deregisterDatabases)))))
 
 (defun codeql-query-server-active-database ()
@@ -2672,9 +2672,11 @@ Our implementation simply returns the thing at point as a candidate."
                               src-buffer))))
                      (message "No query results in %s!" bqrs-path)))))
              :error-fn
-             (jsonrpc-lambda (&key code message data &allow-other-keys)
-               (codeql--query-server-jsonrpc-unregister-request)
-               (message "Error %s: %s %s" code message data))
+             (let ((bufer-context buffer-context))
+               (jsonrpc-lambda (&key code message data &allow-other-keys)
+                 (with-current-buffer
+                     (codeql--query-server-jsonrpc-unregister-request))
+                 (message "Error %s: %s\n%s\n" code message data)))
              :deferred :evaluation/runQueries)
           (codeql--query-server-jsonrpc-register-request
            id
@@ -2704,10 +2706,11 @@ Our implementation simply returns the thing at point as a candidate."
               `(:body
                 (:db ,(codeql--file-truename codeql--active-database)
                      :additionalPacks ,(vconcat codeql--search-paths-buffer-local)
-                     :externalInputs nil
+                     :externalInputs ()
                      :outputPath ,(codeql--tramp-unwrap bqrs-path)
                      :queryPath ,(codeql--tramp-unwrap query-path)
-                     ;; XXX: ???
+                     ;; do we want Datalog Intermediary Language dumps?
+                     ;; https://codeql.github.com/docs/codeql-overview/codeql-glossary/#dil
                      ;;:dilPath: string
                      ;;:logPath: string
                      :target ,query-target)
@@ -2775,9 +2778,11 @@ Our implementation simply returns the thing at point as a candidate."
                               src-buffer))))
                      (message "No query results in %s!" bqrs-path)))))
              :error-fn
-             (jsonrpc-lambda (&key code message data &allow-other-keys)
-               (codeql--query-server-jsonrpc-unregister-request)
-               (message "Error %s: %s %s" code message data))
+             (let ((buffer-context buffer-context))
+               (jsonrpc-lambda (&key code message data &allow-other-keys)
+                 (with-current-buffer buffer-context
+                   (codeql--query-server-jsonrpc-unregister-request))
+                 (message "Error %s: %s\n%s\n" code message data)))
              :deferred :evaluation/runQuery)
           (codeql--query-server-jsonrpc-register-request
            id
@@ -2883,9 +2888,11 @@ Our implementation simply returns the thing at point as a candidate."
                                                        src-filename
                                                        src-buffer)))))
              :error-fn
-             (jsonrpc-lambda (&key code message data &allow-other-keys)
-               (codeql--query-server-jsonrpc-unregister-request)
-               (message "Error %s: %s %s" code message data))
+             (let ((buffer-context buffer-context))
+               (jsonrpc-lambda (&key code message data &allow-other-keys)
+                 (with-current-buffer buffer-context
+                   (codeql--query-server-jsonrpc-unregister-request))
+                 (message "Error %s: %s\n%s\n" code message data)))
              :deferred :compilation/compileQuery)
           ;; register this request so we can cancel it if need be
           (codeql--query-server-jsonrpc-register-request
