@@ -629,6 +629,37 @@ If optional MARKER, return a marker instead"
                (message message)
              (message "ERROR: Query was canceled"))))))
 
+(defun codeql--query-server2-handle-message (&rest params)
+  "Handle SERVER's message from PARAMS."
+  (cl-destructuring-bind ((&key resultType queryId evaluationTime message &allow-other-keys)) params
+    (cond ((eql resultType 0)
+           '())
+          ((eql resultType 1)
+           ;; oh the joys of function binding vs variable binding :P
+           (if message
+               (message message)
+             (message "ERROR: Other")))
+          ((eql resultType 2)
+           (if message
+               (message message)
+             (message "ERROR: Compilation")))
+          ((eql resultType 3)
+           (if message
+               (message message)
+             (message "ERROR: OOM")))
+          ((eql resultType 4)
+           (if message
+               (message message)
+             (message "ERROR: Query Canceled")))
+          ((eql resultType 5)
+           (if message
+               (message message)
+             (message "ERROR: DB Scheme mismatch")))
+          ((eql resultType 6)
+           (if message
+               (message message)
+             (message "ERROR: DB Scheme no upgrade found"))))))
+
 ;;; emacs-wide state tracking variables and functions
 
 (defvar codeql--registered-database-history nil)
@@ -996,7 +1027,7 @@ Provides backwards references into the AST buffer from the source file.")
 
     ;; perform any local deregistration first
     (when (and codeql--active-database codeql--database-dataset-folder)
-      (codeql-query-server-deregister-database codeql--database-dataset-folder))
+      (codeql-query-server-deregister-database codeql--database-dataset-folder database-path))
 
     ;; check that target dataset is not registered in a different session
     (when-let ((buffer (codeql--active-datasets-get database-dataset-folder)))
@@ -1004,7 +1035,7 @@ Provides backwards references into the AST buffer from the source file.")
       ;; check if we need to do remote deregister
       (with-current-buffer buffer
         (when (and codeql--active-database codeql--database-dataset-folder)
-          (codeql-query-server-deregister-database codeql--database-dataset-folder))))
+          (codeql-query-server-deregister-database codeql--database-dataset-folder database-path))))
 
     (message "Registering: %s" database-dataset-folder)
 
@@ -1059,7 +1090,7 @@ Provides backwards references into the AST buffer from the source file.")
        :evaluation/registerDatabases
        `(:body
          (:databases
-          [,database-dataset-folder])
+          [,(codeql--file-truename database-path)])
          :progressId ,(codeql--query-server-next-progress-id))
        :success-fn
        (let ((buffer (current-buffer))
@@ -1069,8 +1100,10 @@ Provides backwards references into the AST buffer from the source file.")
              (source-location-prefix source-location-prefix)
              (source-archive-root source-archive-root)
              (source-archive-zip source-archive-zip))
-         (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
-           ;;(message "Success: %s" registeredDatabases)
+         (jsonrpc-lambda (&rest params)
+           (let ((errors (codeql--query-server2-handle-message params)))
+             (when errors
+               (error errors)))
            (with-current-buffer buffer
              ;; global addition can be asynchronous, so we do that on success only
              (codeql--active-datasets-add database-dataset-folder (current-buffer))
@@ -1095,7 +1128,7 @@ Provides backwards references into the AST buffer from the source file.")
        ;; synchronize to only register when deregister has completed in global state
        :deferred :evaluation/registerDatabases)))))
 
-(defun codeql-query-server-deregister-database (database-dataset-folder)
+(defun codeql-query-server-deregister-database (database-dataset-folder &optional database-path)
   "Deregister database associated to DATABASE-DATASET-FOLDER."
   (message "Deregistering: %s" database-dataset-folder)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -1131,7 +1164,7 @@ Provides backwards references into the AST buffer from the source file.")
            (codeql--query-server-current-or-error)
            :evaluation/deregisterDatabases
            `(:body
-             (:databases [,database-dataset-folder])
+             (:databases [,(codeql--file-truename database-path)])
              :progressId ,(codeql--query-server-next-progress-id))
            :success-fn
            (let
@@ -2669,7 +2702,7 @@ Our implementation simply returns the thing at point as a candidate."
                 `(:query (:xx ""))))
              (run-query-params
               `(:body
-                (:db ,codeql--database-dataset-folder
+                (:db ,(codeql--file-truename codeql--active-database)
                      :additionalPacks ,(vconcat codeql--search-paths-buffer-local)
                      :externalInputs nil
                      :outputPath ,(codeql--tramp-unwrap bqrs-path)
@@ -2695,9 +2728,12 @@ Our implementation simply returns the thing at point as a candidate."
                    (quick-eval quick-eval)
                    (src-filename src-filename)
                    (src-root codeql--database-source-archive-root))
-               (jsonrpc-lambda (&rest _)
+               (jsonrpc-lambda (&rest params)
                  (with-current-buffer buffer-context
                    (codeql--query-server-jsonrpc-unregister-request))
+                 (let ((errors (codeql--query-server2-handle-message params)))
+                   (when errors
+                     (error errors)))
                  (message "Query run completed, checking results.")
                  ;; if size is > 0 then we have results to deal with
                  (let ((bqrs-size (file-attribute-size (file-attributes bqrs-path))))
