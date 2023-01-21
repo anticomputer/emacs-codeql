@@ -2220,6 +2220,11 @@ Our implementation simply returns the thing at point as a candidate."
   (puthash src-filename (list json src-root) codeql--ast-cache)
   (codeql--render-ast json src-root src-filename src-buffer))
 
+(defun codeql--templated-query-p (query-path)
+  (or (string-match "/localDefinitions.ql$" query-path)
+      (string-match "/localReferences.ql$" query-path)
+      (string-match "/printAst.ql$" query-path)))
+
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id &optional src-filename src-root src-buffer)
   "Parse the results at BQRS-PATH and render them accordingly to the user."
@@ -2261,9 +2266,7 @@ Our implementation simply returns the thing at point as a candidate."
        ;; AST parsing
        ;; process AST's, definitions, and references
 
-       ((or (string-match "/localDefinitions.ql$" query-path)
-            (string-match "/localReferences.ql$" query-path)
-            (string-match "/printAst.ql$" query-path))
+       ((codeql--templated-query-p query-path)
 
         ;; don't let these be entered from query history
         (if (and src-filename src-root)
@@ -2533,9 +2536,7 @@ Our implementation simply returns the thing at point as a candidate."
                                (id (json-pointer-get query-info "/id")))
                            (let ((timestamp (current-time-string)))
                              ;; skip templated queries in query history
-                             (unless (or (string-match "/localDefinitions.ql$" query-path)
-                                         (string-match "/localReferences.ql$" query-path)
-                                         (string-match "/printAst.ql$" query-path))
+                             (unless (codeql--templated-query-p query-path)
                                (puthash
                                 (format "[%s] %s (%s) [%s]"
                                         timestamp
@@ -2573,16 +2574,17 @@ Our implementation simply returns the thing at point as a candidate."
          (codeql--query-server-current-or-error)
          :evaluation/runQueries)))))
 
-(defun codeql--query-server-request-compile-and-run (buffer-context
-                                                     library-path
-                                                     qlo-path
-                                                     bqrs-path
-                                                     query-path
-                                                     query-info
-                                                     db-path
-                                                     db-scheme
-                                                     quick-eval
-                                                     &optional template-values src-filename src-buffer)
+(defun codeql--query-server-request-compile-and-run
+    (buffer-context
+     library-path
+     qlo-path
+     bqrs-path
+     query-path
+     query-info
+     db-path
+     db-scheme
+     quick-eval
+     &optional template-values src-filename src-buffer)
   "Request query compilation from the query server."
 
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
