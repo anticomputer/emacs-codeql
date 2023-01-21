@@ -3,7 +3,7 @@
 ;; Author: Bas Alberts
 ;; Maintainer: Bas Alberts <bas@anti.computer>
 ;; Version: 0.2.0
-;; Package-Requires: ((emacs "27.1") (seq "2.23") (transient "0.3.7") (jsonrpc "1.0.14") (tree-sitter "0.18.0") (tree-sitter-langs "0.11.4") (tree-sitter-indent) (aggressive-indent) (eglot) (projectile) (org))
+;; Package-Requires: ((emacs "27.1") (seq "2.23") (transient "0.3.7") (jsonrpc "1.0.14") (tree-sitter "0.18.0") (tree-sitter-langs "0.11.4") (tree-sitter-indent) (aggressive-indent) (eglot) (org))
 ;; Homepage: https://github.com/anticomputer/codeql.el
 ;; Keywords: dev
 
@@ -42,8 +42,7 @@
 ;;
 ;; A utility layer that enhances ql-tree-sitter-mode with modern codeql
 ;; ide extension functionality. It requires transient and json-pointer
-;; to function in a basic capacity but projectile and eglot are highly
-;; recommended for an optimal UX.
+;; to function in a basic capacity but eglot is highly recommended.
 ;;
 ;; While ql-tree-sitter.el does function without emacs-codeql.el, the two
 ;; are assumed to operate in tandem and considered part of the same package.
@@ -98,6 +97,7 @@
 (require 'url-parse)
 (require 'org)
 (require 'ol)
+(require 'files)
 
 ;; bundled
 (require 'json-pointer)
@@ -164,6 +164,11 @@
   :type 'boolean
   :group 'emacs-codeql)
 
+(defcustom codeql-query-server "query-server"
+  "Which query-server to use."
+  :type 'string
+  :group 'emacs-codeql)
+
 (defcustom codeql-query-server-timeout most-positive-fixnum
   "Query server compile/run timeout in seconds.
 
@@ -196,11 +201,6 @@ emacs-codeql requires eglot 20220326.2143 or newer from MELPA."
 
 (defcustom codeql-verbose-commands nil
   "Be verbose about which commands we're running at any given time."
-  :type 'boolean
-  :group 'emacs-codeql)
-
-(defcustom codeql-configure-projectile t
-  "Configure project by default."
   :type 'boolean
   :group 'emacs-codeql)
 
@@ -244,12 +244,7 @@ standard search path configurations.
 
 The default value of . ensures that either the project root, or the CWD of the
 current query file is part of your search path at a higher precedence than the
-configured paths.
-
-Please configure your codeql cli search paths through ~/.config/codeql/config as
-per:
-
-https://codeql.github.com/docs/codeql-cli/specifying-command-options-in-a-codeql-configuration-file/")
+configured paths.")
 
 ;; internal variables and configurations
 
@@ -305,7 +300,7 @@ Leave nil for default.")
 (defun codeql--search-paths-from-emacs-config ()
   "Grab search paths from our emacs configuration."
   (cl-loop for path in codeql-search-paths
-           unless (codeql--file-exists-p path) do
+           unless (and path (codeql--file-exists-p path)) do
            (error (format "Non-existing search path in configuration: %s" path))
            collect (let ((local-search-path
                           (codeql--tramp-unwrap
@@ -317,19 +312,13 @@ Leave nil for default.")
   "Return any currently configured codeql cli search paths."
   (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
-;; Projectile configuration
-
-(when codeql-configure-projectile
-  (require 'projectile)
-  ;; use projectile for project root management
-  (projectile-register-project-type
-   'ql '("qlpack.yml")
-   ;; TODO: fill these in with codeql commands
-   ;; :compile ""
-   ;; :test ""
-   ;; :run ""
-   ;; :test-suffix ""
-   :project-file "qlpack.yml"))
+(defun codeql--find-project-root ()
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode))
+  (let ((root
+         (or (locate-dominating-file (buffer-file-name) "qlpack.yml")
+             (locate-dominating-file (buffer-file-name) "codeql-pack.yml"))))
+    (when root (message "Found project root: %s" root)
+          root)))
 
 ;; Eglot configuration
 
@@ -387,28 +376,11 @@ Leave nil for default.")
   ;; ensure we were able to resolve _A_ path for the codeql cli local|remote execution
   (cl-assert codeql--cli-buffer-local t)
 
-  ;; ensure we have the eglot LSP client setup if folks want it
-  ;; catch any errors so we don't fail just because the LSP fails
-  (condition-case nil
-      ;; without eglot we don't get default-directory set from project-root
-      ;; so we back up to a reasonable alternative before resolving paths
-
-      (if (and codeql-configure-eglot-lsp
-               (or (and (file-remote-p (buffer-file-name))
-                        (yes-or-no-p "[WARNING] Do you want to use LSP remotely? This can be very slow!"))
-                   (not (file-remote-p (buffer-file-name)))))
-          ;; turn eglot on if local or we really want it remote
-          (eglot-ensure)
-        ;; set default-directory to a sane alternative if not
-        (if (buffer-file-name)
-            (setq default-directory (file-name-directory (buffer-file-name)))
-          (message "Strange buffer-file-name: %s" (buffer-file-name))))
-
-    ;; no LSP for us due to error
-    (error (progn
-             (message "Ignoring failed LSP initialization and plowing ahead!")
-             (when (buffer-file-name)
-               (setq default-directory (file-name-directory (buffer-file-name)))))))
+  ;; always set default-directory to project root
+  (setq default-directory
+        (or (codeql--find-project-root)
+            ;; if we can't find a project root, assume cwd is project root
+            (file-name-directory (buffer-file-name))))
 
   ;; now that default-directory points where it should, resolve our search paths
   (message "Resolving search paths from configuration.")
@@ -416,16 +388,51 @@ Leave nil for default.")
         (append
          ;; emacs-codeql configs always have precedence
          (codeql--search-paths-from-emacs-config)
-         ;; only add new paths that weren't already configured to prevent double-hits
+         ;; only add new paths that weren't already configured to prevent double-hits, this can be nil
          (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
                   for path in config-paths
                   unless (member path codeql-search-paths)
                   collect path)))
 
-  (when (and (<= (length codeql--search-paths-buffer-local) 1)
-             (yes-or-no-p "Found <= 1 search path entry, did you forget to configure ~/.config/codeql/config?"))
-    (message "Search paths: %s" codeql--search-paths-buffer-local)
-    (error "See https://github.com/anticomputer/emacs-codeql for configuration examples.")))
+  ;; fallback for when library paths don't work
+  ;; (message "Resolving search paths from qlpack in PATH.")
+  ;; (let ((qlpack-paths (codeql--resolve-qlpack-paths
+  ;;                      (codeql--tramp-unwrap
+  ;;                       (expand-file-name
+  ;;                        (codeql--tramp-wrap default-directory))))))
+  ;;   (cl-loop for pack-paths in qlpack-paths do
+  ;;            ;;(message "Adding search paths for qlpack: %s" pack-paths)
+  ;;            (setq codeql--search-paths-buffer-local
+  ;;                  (append pack-paths codeql--search-paths-buffer-local))))
+
+  ;; library paths should contain everything we need in terms of search paths
+  (let ((library-paths
+         (codeql--resolve-library-paths
+          (codeql--tramp-unwrap
+           (expand-file-name
+            (codeql--tramp-wrap default-directory))))))
+    (setq codeql--search-paths-buffer-local
+          (append
+           codeql--search-paths-buffer-local
+           (cl-loop for library-path across library-paths
+                    unless (member library-path codeql--search-paths-buffer-local)
+                    collect library-path))))
+
+  ;; dedupe and remove nil from search paths
+  (setq codeql--search-paths-buffer-local
+        (delq nil (delete-dups
+                   codeql--search-paths-buffer-local)))
+
+  ;; now that we have all our search paths, let's try and start up our LSP server
+  (condition-case nil
+      (when (and codeql-configure-eglot-lsp
+                 (or (and (file-remote-p (buffer-file-name))
+                          (yes-or-no-p "[WARNING] Do you want to use LSP remotely? This can be very slow!"))
+                     (not (file-remote-p (buffer-file-name)))))
+        ;; turn eglot on if local or we really want it remote
+        (eglot-ensure))
+    ;; no LSP for us due to error
+    (error (message "Ignoring failed LSP initialization and plowing ahead!"))))
 
 ;; add a hook that sets up all the things we need to be available in the buffer-local context
 (add-hook 'ql-tree-sitter-mode-hook #'codeql--buffer-local-init-hook)
@@ -788,6 +795,33 @@ Provides backwards references into the AST buffer from the source file.")
   ;; nil indicates there was an error resolving these
   (and codeql--library-path codeql--dbscheme))
 
+(defun codeql--resolve-library-paths (dir)
+  "Resolve library paths for DIR."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --dir=%s"
+                      (codeql--cli-buffer-local-as-string) dir))
+         (json (codeql--shell-command-to-string cmd)))
+    (when json
+      (condition-case nil
+          (cl-destructuring-bind (&key libraryPath &allow-other-keys)
+              (json-parse-string json :object-type 'plist)
+            ;; this is a vector
+            libraryPath)
+        (error (progn (message "error parsing json: %s" json) nil))))))
+
+(defun codeql--resolve-qlpack-paths (dir)
+  "Resolve qlpack paths from DIR."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (let* ((cmd (format "%s resolve qlpacks -v --log-to-stderr --format=json --search-path=%s"
+                      (codeql--cli-buffer-local-as-string) dir))
+         (json (codeql--shell-command-to-string cmd)))
+    (when json
+      (condition-case nil
+          (let* ((qlpacks (json-parse-string json :object-type 'alist)))
+            (cl-loop for qlpack in qlpacks collect
+                     (mapcar #'identity (cdr qlpack))))
+        (error (progn (message "error parsing json: %s" json) nil))))))
+
 (defun codeql--database-info (database-path)
   "Resolve info for database at DATABASE-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -1117,12 +1151,13 @@ Provides backwards references into the AST buffer from the source file.")
          (message "Rendering failed (too many results?) Returning raw CSV.")
          (buffer-string))))))
 
-(defun codeql--escape-org-description (description &optional br-open br-close)
+(defun codeql--escape-org-description (description)
   "Replace [] with something harmless in org link descriptions."
-  (replace-regexp-in-string "\\[\\|\\]"
-                            (lambda (x) (if (string= x "[") (or br-open "⁅") (or br-close "⁆"))) description))
+  (replace-regexp-in-string "\\[\\|\\]\\|=\\|~\\|_\\|/\\|+"
+                            ;; this wraps with a zero width space ;)
+                            (lambda (x) (format "​%s​" x)) description))
 
-(defun codeql--result-node-to-org (node &optional custom-description br-open br-close)
+(defun codeql--result-node-to-org (node &optional custom-description)
   "Transform a result node into an org compatible link|string representation."
   ;; https://orgmode.org/guide/Hyperlinks.html
   (if (codeql--result-node-visitable node)
@@ -1141,8 +1176,7 @@ Provides backwards references into the AST buffer from the source file.")
                             (codeql--result-node-column node)))
               (desc (codeql--result-node-label node)))
           (format "[[%s][%s]]" (org-link-escape link)
-                  (codeql--escape-org-description
-                   (or custom-description desc) br-open br-close))))
+                  (codeql--escape-org-description (or custom-description desc)))))
     ;; not visitable, just return the label
     (format "%s" (codeql--result-node-label node))))
 
@@ -1499,15 +1533,30 @@ Group 8 matches the closing parenthesis.")
 ;; template queries for definitions, references, and AST
 
 (defvar codeql--templated-query-formats
-  (list :c           "cpp/ql/src/%s.ql"
-        :cpp         "cpp/ql/src/%s.ql"
-        :java        "java/ql/src/%s.ql"
-        :cs          "csharp/ql/src/%s.ql"
-        :javascript  "javascript/ql/src/%s.ql"
-        :python      "python/ql/src/%s.ql"
-        :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
-        :ruby        "ruby/ql/lib/ide-contextual-queries/%s.ql"
-        :go          "ql/lib/%s.ql")
+  (list
+
+   ;; :c           "cpp/ql/src/%s.ql"
+   ;; :cpp         "cpp/ql/src/%s.ql"
+   ;; :java        "java/ql/src/%s.ql"
+   ;; :cs          "csharp/ql/src/%s.ql"
+   ;; :javascript  "javascript/ql/src/%s.ql"
+   ;; :python      "python/ql/src/%s.ql"
+   ;; :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
+   ;; :ruby        "ruby/ql/lib/ide-contextual-queries/%s.ql"
+   ;; :go          "ql/lib/%s.ql"
+
+   ;; updated for ql-pack relative paths
+   :c           "%s.ql"
+   :cpp         "%s.ql"
+   :java        "%s.ql"
+   :cs          "%s.ql"
+   :javascript  "%s.ql"
+   :python      "%s.ql"
+   :ql          "ide-contextual-queries/%s.ql"
+   :ruby        "ide-contextual-queries/%s.ql"
+   :go          "%s.ql"
+
+   )
   "A format list for finding templated queries by name")
 
 (defun codeql--templated-query-path (language query-name)
@@ -1736,8 +1785,10 @@ the local buffer when appropriate, i.e. when the buffer is a file inside
 a codeql database source archive."
   (interactive)
   (when codeql-enable-xrefs
-    (unless (and (file-remote-p (buffer-file-name))
-                 (not codeql-enable-remote-xrefs))
+    (unless (and
+             (buffer-file-name)
+             (file-remote-p (buffer-file-name))
+             (not codeql-enable-remote-xrefs))
       (if (and (gethash (buffer-file-name) codeql--references-cache)
                (gethash (buffer-file-name) codeql--definitions-cache))
           (progn
@@ -2107,10 +2158,7 @@ Our implementation simply returns the thing at point as a candidate."
                     (with-current-buffer buffer-context
                       (format "%s %s%s"
                               (codeql--ast-item-label node)
-                              (codeql--result-node-to-org
-                               result-node
-                               "⧉"
-                               "〚" "〛")
+                              (codeql--result-node-to-org result-node "⧉")
                               ;; only add Line stamp to roots
                               (if (codeql--ast-item-parent node) "" (format " Line %s" line))))))
               ;; if not, just return a plain text heading
@@ -2814,7 +2862,7 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                            (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
              (cmd (append
                    codeql--cli-buffer-local
-                   (list "execute" "query-server")
+                   (list "execute" codeql-query-server)
                    args)))
         (message "Starting query server.")
         ;; manage these buffer local
