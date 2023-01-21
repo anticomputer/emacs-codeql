@@ -108,9 +108,9 @@ If you are using [`straight.el`](https://github.com/radian-software/straight.el)
 
 ### Getting Started with CodeQL
 
-The quickest way into painfree CodeQL development is to use the [GitHub CLI CodeQL extension](https://github.com/github/gh-codeql) to manage your CodeQL toolchain dependencies and then use [CodeQL Packs](https://codeql.github.com/docs/codeql-cli/about-codeql-packs/) and (optionally) [CodeQL Workspaces](https://codeql.github.com/docs/codeql-cli/about-codeql-workspaces/) for your query development.
+#### Production CodeQL Development
 
-Note: If you opt to not use the gh cli and install the CodeQL CLI yourself, skip to step 5 and remove any `gh` prefixes from the example commands.
+The quickest way into painfree production-ready CodeQL development is to use the [GitHub CLI CodeQL extension](https://github.com/github/gh-codeql) to manage your CodeQL toolchain dependencies and then use [CodeQL Packs](https://codeql.github.com/docs/codeql-cli/about-codeql-packs/) and (optionally) [CodeQL Workspaces](https://codeql.github.com/docs/codeql-cli/about-codeql-workspaces/) for your query development. CodeQL packs are the canonical way to share your CodeQL queries with the CodeQL community.
 
 To get started:
 
@@ -128,13 +128,25 @@ To get started:
 
 7. Open `my-queries/my-first-query.ql` from your `emacs-codeql` enabled Emacs, and off you go!
 
-#### More about CodeQL packs and workspaces
+Note: If you prefer not to use the gh cli, you can also [install the CodeQL CLI yourself](https://codeql.github.com/docs/codeql-cli/getting-started-with-the-codeql-cli/#getting-started-with-the-codeql-cli). The pack commands would have the `gh` prefix removed in this case, but otherwise remain the same.
+
+##### More about CodeQL packs and workspaces
 
 You can find the latest versions of the standard CodeQL packs at https://github.com/orgs/codeql/packages
 
 For more details about how to properly create and work with CodeQL packs please see https://codeql.github.com/docs/codeql-cli/creating-and-working-with-codeql-packs/ and the [CodeQL packs documentation](https://codeql.github.com/docs/codeql-cli/about-ql-packs/).
 
 For writing queries that only depend on standard CodeQL libraries, you do not have to create a workspace. However, for more advanced CodeQL library and query development, we recommend you use [CodeQL workspaces](https://codeql.github.com/docs/codeql-cli/about-codeql-workspaces/) to define and manage your CodeQL project dependencies.
+
+#### Personal CodeQL Development
+
+If you don't intend to publish or otherwise distribute your CodeQL queries, a quicker way to bootstrap a working CodeQL query template environment is via the [VSCode CodeQL Starter Workspace](https://github.com/github/vscode-codeql-starter).
+
+You can again either bootstrap a CodeQL CLI via the [GitHub CLI CodeQL extension](https://github.com/github/gh-codeql) or by [installing it yourself](https://codeql.github.com/docs/codeql-cli/getting-started-with-the-codeql-cli/#getting-started-with-the-codeql-cli).
+
+To use the VSCode CodeQL Starter workspace with `emacs-codeql`, just `git clone --recursive https://github.com/github/vscode-codeql-starter.git` and you'll be able to open any of the example queries contained within this workspace to start iterating on a query.
+
+For example, you can open `vscode-codeql-starter/codeql-custom-queries-ruby/example.ql` with your `emacs-codeql` enabled Emacs, and you're ready to run and iterate on `example.ql` against a Ruby CodeQL database.
 
 ## Using `emacs-codeql`
 
