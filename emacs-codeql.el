@@ -394,16 +394,29 @@ Leave nil for default.")
                   unless (member path codeql-search-paths)
                   collect path)))
 
-  ;; and add any qlpack search paths as well
-  (message "Resolving search paths from qlpack in PATH.")
-  (let ((qlpack-paths (codeql--resolve-qlpack-paths
-                       (codeql--tramp-unwrap
-                        (expand-file-name
-                         (codeql--tramp-wrap default-directory))))))
-    (cl-loop for pack-paths in qlpack-paths do
-             ;;(message "Adding search paths for qlpack: %s" pack-paths)
-             (setq codeql--search-paths-buffer-local
-                   (append pack-paths codeql--search-paths-buffer-local))))
+  ;; fallback for when library paths don't work
+  ;; (message "Resolving search paths from qlpack in PATH.")
+  ;; (let ((qlpack-paths (codeql--resolve-qlpack-paths
+  ;;                      (codeql--tramp-unwrap
+  ;;                       (expand-file-name
+  ;;                        (codeql--tramp-wrap default-directory))))))
+  ;;   (cl-loop for pack-paths in qlpack-paths do
+  ;;            ;;(message "Adding search paths for qlpack: %s" pack-paths)
+  ;;            (setq codeql--search-paths-buffer-local
+  ;;                  (append pack-paths codeql--search-paths-buffer-local))))
+
+  ;; library paths should contain everything we need in terms of search paths
+  (let ((library-paths
+         (codeql--resolve-library-paths
+          (codeql--tramp-unwrap
+           (expand-file-name
+            (codeql--tramp-wrap default-directory))))))
+    (setq codeql--search-paths-buffer-local
+          (append
+           codeql--search-paths-buffer-local
+           (cl-loop for library-path across library-paths
+                    unless (member library-path codeql--search-paths-buffer-local)
+                    collect library-path))))
 
   ;; dedupe and remove nil from search paths
   (setq codeql--search-paths-buffer-local
@@ -782,7 +795,6 @@ Provides backwards references into the AST buffer from the source file.")
   ;; nil indicates there was an error resolving these
   (and codeql--library-path codeql--dbscheme))
 
-;; XXX: currently unused
 (defun codeql--resolve-library-paths (dir)
   "Resolve library paths for DIR."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
