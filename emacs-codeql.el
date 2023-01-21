@@ -164,11 +164,6 @@
   :type 'boolean
   :group 'emacs-codeql)
 
-(defcustom codeql-query-server "query-server2"
-  "Which query-server to use."
-  :type 'string
-  :group 'emacs-codeql)
-
 (defcustom codeql-query-server-timeout most-positive-fixnum
   "Query server compile/run timeout in seconds.
 
@@ -245,6 +240,15 @@ standard search path configurations.
 The default value of . ensures that either the project root, or the CWD of the
 current query file is part of your search path at a higher precedence than the
 configured paths.")
+
+(defvar-local codeql-query-server nil
+  "Which query-server type to use.
+
+This is automatically resolved for the buffer local context since we may be
+operating multiple codeql environments, both local and remote, concurrently.
+
+Don't confuse this for codeql--query-server, which represents the active
+query server rpc connection.")
 
 ;; internal variables and configurations
 
@@ -805,6 +809,13 @@ Provides backwards references into the AST buffer from the source file.")
           (if stdout-data stdout-data (error "failed to execute cmd"))))
     (error (progn (message "Error in codeql--shell-command-to-string: %s" cmd) nil))))
 
+(defun codeql--resolve-query-server ()
+  "Resolve which query-server to use, legacy or query-server2."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (let* ((cmd (format "%s execute --help" (codeql--cli-buffer-local-as-string)))
+         (help (codeql--shell-command-to-string cmd)))
+    (if (string-match-p "query-server2" help) "query-server2" "query-server")))
+
 (defun codeql--resolve-query-paths (query-path)
   "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -1158,27 +1169,28 @@ Provides backwards references into the AST buffer from the source file.")
      (jsonrpc-lambda (&key code message data &allow-other-keys)
        (message "Error %s: %s\n%s\n" code message data))
      :deferred :evaluation/deregisterDatabases))
+
    ;; query-server2
-   (cond ((string= codeql-query-server "query-server2")
-          (jsonrpc-async-request
-           (codeql--query-server-current-or-error)
-           :evaluation/deregisterDatabases
-           `(:body
-             (:databases [,(codeql--file-truename database-path)])
-             :progressId ,(codeql--query-server-next-progress-id))
-           :success-fn
-           (let
-               ((buffer (current-buffer))
-                (database-dataset-folder database-dataset-folder))
-             (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
-               ;;(message "Success: %s" registeredDatabases)
-               (with-current-buffer buffer
-                 (codeql--reset-database-state)
-                 (message "Deregistered: %s" database-dataset-folder))))
-           :error-fn
-           (jsonrpc-lambda (&key code message data &allow-other-keys)
-             (message "Error %s: %s\n%s\n" code message data))
-           :deferred :evaluation/deregisterDatabases)))))
+   ((string= codeql-query-server "query-server2")
+    (jsonrpc-async-request
+     (codeql--query-server-current-or-error)
+     :evaluation/deregisterDatabases
+     `(:body
+       (:databases [,(codeql--file-truename database-path)])
+       :progressId ,(codeql--query-server-next-progress-id))
+     :success-fn
+     (let
+         ((buffer (current-buffer))
+          (database-dataset-folder database-dataset-folder))
+       (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
+         ;;(message "Success: %s" registeredDatabases)
+         (with-current-buffer buffer
+           (codeql--reset-database-state)
+           (message "Deregistered: %s" database-dataset-folder))))
+     :error-fn
+     (jsonrpc-lambda (&key code message data &allow-other-keys)
+       (message "Error %s: %s\n%s\n" code message data))
+     :deferred :evaluation/deregisterDatabases))))
 
 (defun codeql-query-server-active-database ()
   "Get a short identifier for the currently active database."
@@ -3108,7 +3120,13 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                            (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
              (cmd (append
                    codeql--cli-buffer-local
-                   (list "execute" codeql-query-server)
+                   (list "execute"
+                         ;; determine which query server to use
+                         ;; prefer query-server2 when available
+                         ;; don't confuse this with codeql--query-server, which is the rpc connection
+                         (or codeql-query-server
+                             (setq codeql-query-server
+                                   (codeql--resolve-query-server))))
                    args)))
         (message "Starting query server.")
         ;; manage these buffer local
