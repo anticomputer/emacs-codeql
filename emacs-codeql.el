@@ -1141,12 +1141,13 @@ Provides backwards references into the AST buffer from the source file.")
          (message "Rendering failed (too many results?) Returning raw CSV.")
          (buffer-string))))))
 
-(defun codeql--escape-org-description (description &optional br-open br-close)
+(defun codeql--escape-org-description (description)
   "Replace [] with something harmless in org link descriptions."
-  (replace-regexp-in-string "\\[\\|\\]"
-                            (lambda (x) (if (string= x "[") (or br-open "⁅") (or br-close "⁆"))) description))
+  (replace-regexp-in-string "\\[\\|\\]\\|=\\|~\\|_\\|/\\|+"
+                            ;; this wraps with a zero width space ;)
+                            (lambda (x) (format "​%s​" x)) description))
 
-(defun codeql--result-node-to-org (node &optional custom-description br-open br-close)
+(defun codeql--result-node-to-org (node &optional custom-description)
   "Transform a result node into an org compatible link|string representation."
   ;; https://orgmode.org/guide/Hyperlinks.html
   (if (codeql--result-node-visitable node)
@@ -1165,8 +1166,7 @@ Provides backwards references into the AST buffer from the source file.")
                             (codeql--result-node-column node)))
               (desc (codeql--result-node-label node)))
           (format "[[%s][%s]]" (org-link-escape link)
-                  (codeql--escape-org-description
-                   (or custom-description desc) br-open br-close))))
+                  (codeql--escape-org-description (or custom-description desc)))))
     ;; not visitable, just return the label
     (format "%s" (codeql--result-node-label node))))
 
@@ -2146,10 +2146,7 @@ Our implementation simply returns the thing at point as a candidate."
                     (with-current-buffer buffer-context
                       (format "%s %s%s"
                               (codeql--ast-item-label node)
-                              (codeql--result-node-to-org
-                               result-node
-                               "⧉"
-                               "〚" "〛")
+                              (codeql--result-node-to-org result-node "⧉")
                               ;; only add Line stamp to roots
                               (if (codeql--ast-item-parent node) "" (format " Line %s" line))))))
               ;; if not, just return a plain text heading
