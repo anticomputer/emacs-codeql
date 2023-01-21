@@ -164,11 +164,6 @@
   :type 'boolean
   :group 'emacs-codeql)
 
-(defcustom codeql-query-server "query-server"
-  "Which query-server to use."
-  :type 'string
-  :group 'emacs-codeql)
-
 (defcustom codeql-query-server-timeout most-positive-fixnum
   "Query server compile/run timeout in seconds.
 
@@ -245,6 +240,15 @@ standard search path configurations.
 The default value of . ensures that either the project root, or the CWD of the
 current query file is part of your search path at a higher precedence than the
 configured paths.")
+
+(defvar-local codeql-query-server nil
+  "Which query-server type to use.
+
+This is automatically resolved for the buffer local context since we may be
+operating multiple codeql environments, both local and remote, concurrently.
+
+Don't confuse this for codeql--query-server, which represents the active
+query server rpc connection.")
 
 ;; internal variables and configurations
 
@@ -629,6 +633,37 @@ If optional MARKER, return a marker instead"
                (message message)
              (message "ERROR: Query was canceled"))))))
 
+(defun codeql--query-server2-handle-message (&rest params)
+  "Handle SERVER's message from PARAMS."
+  (cl-destructuring-bind ((&key resultType queryId evaluationTime message &allow-other-keys)) params
+    (cond ((eql resultType 0)
+           '())
+          ((eql resultType 1)
+           ;; oh the joys of function binding vs variable binding :P
+           (if message
+               (message message)
+             (message "ERROR: Other")))
+          ((eql resultType 2)
+           (if message
+               (message message)
+             (message "ERROR: Compilation")))
+          ((eql resultType 3)
+           (if message
+               (message message)
+             (message "ERROR: OOM")))
+          ((eql resultType 4)
+           (if message
+               (message message)
+             (message "ERROR: Query Canceled")))
+          ((eql resultType 5)
+           (if message
+               (message message)
+             (message "ERROR: DB Scheme mismatch")))
+          ((eql resultType 6)
+           (if message
+               (message message)
+             (message "ERROR: DB Scheme no upgrade found"))))))
+
 ;;; emacs-wide state tracking variables and functions
 
 (defvar codeql--registered-database-history nil)
@@ -773,6 +808,13 @@ Provides backwards references into the AST buffer from the source file.")
           ;; return stdout or signal error
           (if stdout-data stdout-data (error "failed to execute cmd"))))
     (error (progn (message "Error in codeql--shell-command-to-string: %s" cmd) nil))))
+
+(defun codeql--resolve-query-server ()
+  "Resolve which query-server to use, legacy or query-server2."
+  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+  (let* ((cmd (format "%s execute --help" (codeql--cli-buffer-local-as-string)))
+         (help (codeql--shell-command-to-string cmd)))
+    (if (string-match-p "query-server2" help) "query-server2" "query-server")))
 
 (defun codeql--resolve-query-paths (query-path)
   "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH."
@@ -996,7 +1038,7 @@ Provides backwards references into the AST buffer from the source file.")
 
     ;; perform any local deregistration first
     (when (and codeql--active-database codeql--database-dataset-folder)
-      (codeql-query-server-deregister-database codeql--database-dataset-folder))
+      (codeql-query-server-deregister-database codeql--database-dataset-folder database-path))
 
     ;; check that target dataset is not registered in a different session
     (when-let ((buffer (codeql--active-datasets-get database-dataset-folder)))
@@ -1004,78 +1046,151 @@ Provides backwards references into the AST buffer from the source file.")
       ;; check if we need to do remote deregister
       (with-current-buffer buffer
         (when (and codeql--active-database codeql--database-dataset-folder)
-          (codeql-query-server-deregister-database codeql--database-dataset-folder))))
+          (codeql-query-server-deregister-database codeql--database-dataset-folder database-path))))
 
     (message "Registering: %s" database-dataset-folder)
-    (jsonrpc-async-request
-     (codeql--query-server-current-or-error)
-     :evaluation/registerDatabases
-     `(:body
-       (:databases
-        [(:dbDir ,database-dataset-folder :workingSet "default")])
-       :progressId ,(codeql--query-server-next-progress-id))
-     :success-fn
-     (let ((buffer (current-buffer))
-           (database-language database-language)
-           (database-path database-path)
-           (database-dataset-folder database-dataset-folder)
-           (source-location-prefix source-location-prefix)
-           (source-archive-root source-archive-root)
-           (source-archive-zip source-archive-zip))
-       (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
-         ;;(message "Success: %s" registeredDatabases)
-         (with-current-buffer buffer
-           ;; global addition can be asynchronous, so we do that on success only
-           (codeql--active-datasets-add database-dataset-folder (current-buffer))
-           ;; associate the source root with the query buffer globally for xref support
-           (puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
-           ;; save in database selection history
-           (puthash database-path database-path codeql--registered-database-history)
-           ;; these variables are buffer-local to ql-tree-sitter-mode
-           (setq codeql--active-database database-path)
-           (setq codeql--active-database-language database-language)
-           (setq codeql--database-dataset-folder database-dataset-folder)
-           (setq codeql--database-source-location-prefix source-location-prefix)
-           (setq codeql--database-source-archive-root source-archive-root)
-           (setq codeql--database-source-archive-zip source-archive-zip)
-           (message "Registered: %s" database-dataset-folder)
-           ;; might change codeql--active-database semantics at some point
-           ;; so use the database path value we _KNOW_ is legit
-           (codeql--database-extract-source-archive-zip database-path))))
-     :error-fn
-     (jsonrpc-lambda (&key code message data &allow-other-keys)
-       (message "Error %s: %s %s" code message data))
-     ;; synchronize to only register when deregister has completed in global state
-     :deferred :evaluation/registerDatabases
-     )))
 
-(defun codeql-query-server-deregister-database (database-dataset-folder)
+    ;; XXX: dedupe code when everything is working
+    (cond
+     ;; legacy query-server
+     ((string= codeql-query-server "query-server")
+      (jsonrpc-async-request
+       (codeql--query-server-current-or-error)
+       :evaluation/registerDatabases
+       `(:body
+         (:databases
+          [(:dbDir ,database-dataset-folder :workingSet "default")])
+         :progressId ,(codeql--query-server-next-progress-id))
+       :success-fn
+       (let ((buffer (current-buffer))
+             (database-language database-language)
+             (database-path database-path)
+             (database-dataset-folder database-dataset-folder)
+             (source-location-prefix source-location-prefix)
+             (source-archive-root source-archive-root)
+             (source-archive-zip source-archive-zip))
+         (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
+           ;;(message "Success: %s" registeredDatabases)
+           (with-current-buffer buffer
+             ;; global addition can be asynchronous, so we do that on success only
+             (codeql--active-datasets-add database-dataset-folder (current-buffer))
+             ;; associate the source root with the query buffer globally for xref support
+             (puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
+             ;; save in database selection history
+             (puthash database-path database-path codeql--registered-database-history)
+             ;; these variables are buffer-local to ql-tree-sitter-mode
+             (setq codeql--active-database database-path)
+             (setq codeql--active-database-language database-language)
+             (setq codeql--database-dataset-folder database-dataset-folder)
+             (setq codeql--database-source-location-prefix source-location-prefix)
+             (setq codeql--database-source-archive-root source-archive-root)
+             (setq codeql--database-source-archive-zip source-archive-zip)
+             (message "Registered: %s" database-dataset-folder)
+             ;; might change codeql--active-database semantics at some point
+             ;; so use the database path value we _KNOW_ is legit
+             (codeql--database-extract-source-archive-zip database-path))))
+       :error-fn
+       (jsonrpc-lambda (&key code message data &allow-other-keys)
+         (message "Error %s: %s\n%s\n" code message data))
+       ;; synchronize to only register when deregister has completed in global state
+       :deferred :evaluation/registerDatabases))
+     ;; query-server2
+     ((string= codeql-query-server "query-server2")
+      (jsonrpc-async-request
+       (codeql--query-server-current-or-error)
+       :evaluation/registerDatabases
+       `(:body
+         (:databases
+          [,(codeql--file-truename database-path)])
+         :progressId ,(codeql--query-server-next-progress-id))
+       :success-fn
+       (let ((buffer (current-buffer))
+             (database-language database-language)
+             (database-path database-path)
+             (database-dataset-folder database-dataset-folder)
+             (source-location-prefix source-location-prefix)
+             (source-archive-root source-archive-root)
+             (source-archive-zip source-archive-zip))
+         (jsonrpc-lambda (&rest params)
+           (let ((errors (codeql--query-server2-handle-message params)))
+             (when errors
+               (error errors)))
+           (with-current-buffer buffer
+             ;; global addition can be asynchronous, so we do that on success only
+             (codeql--active-datasets-add database-dataset-folder (current-buffer))
+             ;; associate the source root with the query buffer globally for xref support
+             (puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
+             ;; save in database selection history
+             (puthash database-path database-path codeql--registered-database-history)
+             ;; these variables are buffer-local to ql-tree-sitter-mode
+             (setq codeql--active-database database-path)
+             (setq codeql--active-database-language database-language)
+             (setq codeql--database-dataset-folder database-dataset-folder)
+             (setq codeql--database-source-location-prefix source-location-prefix)
+             (setq codeql--database-source-archive-root source-archive-root)
+             (setq codeql--database-source-archive-zip source-archive-zip)
+             (message "Registered: %s" database-dataset-folder)
+             ;; might change codeql--active-database semantics at some point
+             ;; so use the database path value we _KNOW_ is legit
+             (codeql--database-extract-source-archive-zip database-path))))
+       :error-fn
+       (jsonrpc-lambda (&key code message data &allow-other-keys)
+         (message "Error %s: %s\n%s\n" code message data))
+       ;; synchronize to only register when deregister has completed in global state
+       :deferred :evaluation/registerDatabases)))))
+
+(defun codeql-query-server-deregister-database (database-dataset-folder &optional database-path)
   "Deregister database associated to DATABASE-DATASET-FOLDER."
   (message "Deregistering: %s" database-dataset-folder)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   ;; we need global removal to be synchronous, so just pull the entry here
   (codeql--active-datasets-del database-dataset-folder)
-  (jsonrpc-async-request
-   (codeql--query-server-current-or-error)
-   :evaluation/deregisterDatabases
-   `(:body
-     (:databases
-      [(:dbDir ,database-dataset-folder :workingSet "default")])
-     :progressId ,(codeql--query-server-next-progress-id))
-   :success-fn
-   (let
-       ((buffer (current-buffer))
-        (database-dataset-folder database-dataset-folder))
-     (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
-       ;;(message "Success: %s" registeredDatabases)
-       (with-current-buffer buffer
-         (codeql--reset-database-state)
-         (message "Deregistered: %s" database-dataset-folder))))
-   :error-fn
-   (jsonrpc-lambda (&key code message data &allow-other-keys)
-     (message "Error %s: %s %s" code message data))
-   :deferred :evaluation/deregisterDatabases
-   ))
+
+  (cond
+   ;; legacy query server
+   ((string= codeql-query-server "query-server")
+    (jsonrpc-async-request
+     (codeql--query-server-current-or-error)
+     :evaluation/deregisterDatabases
+     `(:body
+       (:databases
+        [(:dbDir ,database-dataset-folder :workingSet "default")])
+       :progressId ,(codeql--query-server-next-progress-id))
+     :success-fn
+     (let
+         ((buffer (current-buffer))
+          (database-dataset-folder database-dataset-folder))
+       (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
+         ;;(message "Success: %s" registeredDatabases)
+         (with-current-buffer buffer
+           (codeql--reset-database-state)
+           (message "Deregistered: %s" database-dataset-folder))))
+     :error-fn
+     (jsonrpc-lambda (&key code message data &allow-other-keys)
+       (message "Error %s: %s\n%s\n" code message data))
+     :deferred :evaluation/deregisterDatabases))
+
+   ;; query-server2
+   ((string= codeql-query-server "query-server2")
+    (jsonrpc-async-request
+     (codeql--query-server-current-or-error)
+     :evaluation/deregisterDatabases
+     `(:body
+       (:databases [,(codeql--file-truename database-path)])
+       :progressId ,(codeql--query-server-next-progress-id))
+     :success-fn
+     (let
+         ((buffer (current-buffer))
+          (database-dataset-folder database-dataset-folder))
+       (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
+         ;;(message "Success: %s" registeredDatabases)
+         (with-current-buffer buffer
+           (codeql--reset-database-state)
+           (message "Deregistered: %s" database-dataset-folder))))
+     :error-fn
+     (jsonrpc-lambda (&key code message data &allow-other-keys)
+       (message "Error %s: %s\n%s\n" code message data))
+     :deferred :evaluation/deregisterDatabases))))
 
 (defun codeql-query-server-active-database ()
   "Get a short identifier for the currently active database."
@@ -1579,12 +1694,17 @@ Group 8 matches the closing parenthesis.")
              do
              (message "Resolved templated query %s to %s" query-name full-path)
              (let ((template-values
-                    `(:selectedSourceFile
-                      (:values
-                       (:tuples
-                        [(:stringValue
-                          ,(codeql--archive-path-from-org-filename
-                            (codeql--tramp-unwrap src-filename)))])))))
+                    (cond ((string= codeql-query-server "query-server")
+                           `(:selectedSourceFile
+                             (:values
+                              (:tuples
+                               [(:stringValue
+                                 ,(codeql--archive-path-from-org-filename
+                                   (codeql--tramp-unwrap src-filename)))]))))
+                          ((string= codeql-query-server "query-server2")
+                           `(:selectedSourceFile
+                             ,(codeql--archive-path-from-org-filename
+                               (codeql--tramp-unwrap src-filename)))))))
                (codeql--query-server-run-query-from-path
                 full-path
                 nil
@@ -2220,6 +2340,11 @@ Our implementation simply returns the thing at point as a candidate."
   (puthash src-filename (list json src-root) codeql--ast-cache)
   (codeql--render-ast json src-root src-filename src-buffer))
 
+(defun codeql--templated-query-p (query-path)
+  (or (string-match "/localDefinitions.ql$" query-path)
+      (string-match "/localReferences.ql$" query-path)
+      (string-match "/printAst.ql$" query-path)))
+
 ;; abandon hope, all ye who enter here ...
 (defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id &optional src-filename src-root src-buffer)
   "Parse the results at BQRS-PATH and render them accordingly to the user."
@@ -2261,9 +2386,7 @@ Our implementation simply returns the thing at point as a candidate."
        ;; AST parsing
        ;; process AST's, definitions, and references
 
-       ((or (string-match "/localDefinitions.ql$" query-path)
-            (string-match "/localReferences.ql$" query-path)
-            (string-match "/printAst.ql$" query-path))
+       ((codeql--templated-query-p query-path)
 
         ;; don't let these be entered from query history
         (if (and src-filename src-root)
@@ -2486,109 +2609,223 @@ Our implementation simply returns the thing at point as a candidate."
                                          &optional template-values src-filename src-buffer)
   "Request a query evaluation from the query server."
   (with-current-buffer buffer-context
-    (let ((run-query-params
-           `(:body
-             (:db
-              (:dbDir ,codeql--database-dataset-folder
-                      :workingSet "default")
-              :evaluateId ,(codeql--query-server-next-evaluate-id)
-              :queries
-              (:resultsPath ,(codeql--tramp-unwrap bqrs-path)
-                            :qlo ,(format "file:%s" (codeql--tramp-unwrap qlo-path))
-                            :allowUnknownTemplates t
-                            :templateValues ,template-values
-                            :id 0
-                            :timeoutSecs 0)
-              :stopOnError :json-false
-              :useSequenceHint :json-false)
-             :progressId ,(codeql--query-server-next-progress-id))))
 
-      (message "Running query ...")
-      (cl-multiple-value-bind (id timer)
-          (codeql--jsonrpc-async-request
+    (cond
+     ;; legacy query-server
+     ((string= codeql-query-server "query-server")
+      (let ((run-query-params
+             `(:body
+               (:db
+                (:dbDir ,codeql--database-dataset-folder
+                        :workingSet "default")
+                :evaluateId ,(codeql--query-server-next-evaluate-id)
+                :queries
+                (:resultsPath ,(codeql--tramp-unwrap bqrs-path)
+                              :qlo ,(format "file:%s" (codeql--tramp-unwrap qlo-path))
+                              :allowUnknownTemplates t
+                              :templateValues ,template-values
+                              :id 0
+                              :timeoutSecs 0)
+                :stopOnError :json-false
+                :useSequenceHint :json-false)
+               :progressId ,(codeql--query-server-next-progress-id))))
+
+        (message "Running query ...")
+        (cl-multiple-value-bind (id timer)
+            (codeql--jsonrpc-async-request
+             (codeql--query-server-current-or-error)
+             :evaluation/runQueries run-query-params
+             :timeout codeql-query-server-timeout
+             :success-fn
+             (let ((buffer-context buffer-context)
+                   (query-info query-info)
+                   (bqrs-path bqrs-path)
+                   (query-path query-path)
+                   (db-path db-path)
+                   (quick-eval quick-eval)
+                   (src-filename src-filename)
+                   (src-root codeql--database-source-archive-root))
+               (jsonrpc-lambda (&rest _)
+                 (with-current-buffer buffer-context
+                   (codeql--query-server-jsonrpc-unregister-request))
+                 (message "Query run completed, checking results.")
+                 ;; if size is > 0 then we have results to deal with
+                 (let ((bqrs-size (file-attribute-size (file-attributes bqrs-path))))
+                   (if (> bqrs-size 0)
+                       (progn
+                         (with-current-buffer buffer-context
+                           ;; save in query history,  name/kind/id can be nil!
+                           (let ((name (json-pointer-get query-info "/name"))
+                                 (kind (json-pointer-get query-info "/kind"))
+                                 (id (json-pointer-get query-info "/id")))
+                             (let ((timestamp (current-time-string)))
+                               ;; skip templated queries in query history
+                               (unless (codeql--templated-query-p query-path)
+                                 (puthash
+                                  (format "[%s] %s (%s) [%s]"
+                                          timestamp
+                                          (file-name-nondirectory query-path)
+                                          (if quick-eval "quick-eval" "full-query")
+                                          (codeql-query-server-active-database))
+                                  `(:quick-eval ,quick-eval
+                                                :query-path ,query-path
+                                                :bqrs-path ,bqrs-path
+                                                :db-path ,db-path
+                                                :timestamp ,timestamp
+                                                :name ,name
+                                                :kind ,kind
+                                                :id ,id)
+                                  codeql--completed-query-history)))
+                             ;; display results
+                             (codeql-load-bqrs
+                              bqrs-path
+                              query-path
+                              db-path
+                              name
+                              kind
+                              id
+                              src-filename
+                              codeql--database-source-archive-root
+                              src-buffer))))
+                     (message "No query results in %s!" bqrs-path)))))
+             :error-fn
+             (let ((bufer-context buffer-context))
+               (jsonrpc-lambda (&key code message data &allow-other-keys)
+                 (with-current-buffer
+                     (codeql--query-server-jsonrpc-unregister-request))
+                 (message "Error %s: %s\n%s\n" code message data)))
+             :deferred :evaluation/runQueries)
+          (codeql--query-server-jsonrpc-register-request
+           id
            (codeql--query-server-current-or-error)
-           :evaluation/runQueries run-query-params
-           :timeout codeql-query-server-timeout
-           :success-fn
-           (let ((buffer-context buffer-context)
-                 (query-info query-info)
-                 (bqrs-path bqrs-path)
-                 (query-path query-path)
-                 (db-path db-path)
-                 (quick-eval quick-eval)
-                 (src-filename src-filename)
-                 (src-root codeql--database-source-archive-root))
-             (jsonrpc-lambda (&rest _)
-               (with-current-buffer buffer-context
-                 (codeql--query-server-jsonrpc-unregister-request))
-               (message "Query run completed, checking results.")
-               ;; if size is > 0 then we have results to deal with
-               (let ((bqrs-size (file-attribute-size (file-attributes bqrs-path))))
-                 (if (> bqrs-size 0)
-                     (progn
-                       (with-current-buffer buffer-context
-                         ;; save in query history,  name/kind/id can be nil!
-                         (let ((name (json-pointer-get query-info "/name"))
-                               (kind (json-pointer-get query-info "/kind"))
-                               (id (json-pointer-get query-info "/id")))
-                           (let ((timestamp (current-time-string)))
-                             ;; skip templated queries in query history
-                             (unless (or (string-match "/localDefinitions.ql$" query-path)
-                                         (string-match "/localReferences.ql$" query-path)
-                                         (string-match "/printAst.ql$" query-path))
-                               (puthash
-                                (format "[%s] %s (%s) [%s]"
-                                        timestamp
-                                        (file-name-nondirectory query-path)
-                                        (if quick-eval "quick-eval" "full-query")
-                                        (codeql-query-server-active-database))
-                                `(:quick-eval ,quick-eval
-                                              :query-path ,query-path
-                                              :bqrs-path ,bqrs-path
-                                              :db-path ,db-path
-                                              :timestamp ,timestamp
-                                              :name ,name
-                                              :kind ,kind
-                                              :id ,id)
-                                codeql--completed-query-history)))
-                           ;; display results
-                           (codeql-load-bqrs
-                            bqrs-path
-                            query-path
-                            db-path
-                            name
-                            kind
-                            id
-                            src-filename
-                            codeql--database-source-archive-root
-                            src-buffer))))
-                   (message "No query results in %s!" bqrs-path)))))
-           :error-fn
-           (jsonrpc-lambda (&key code message data &allow-other-keys)
-             (codeql--query-server-jsonrpc-unregister-request)
-             (message "Error %s: %s %s" code message data))
-           :deferred :evaluation/runQueries)
-        (codeql--query-server-jsonrpc-register-request
-         id
-         (codeql--query-server-current-or-error)
-         :evaluation/runQueries)))))
+           :evaluation/runQueries))))
 
-(defun codeql--query-server-request-compile-and-run (buffer-context
-                                                     library-path
-                                                     qlo-path
-                                                     bqrs-path
-                                                     query-path
-                                                     query-info
-                                                     db-path
-                                                     db-scheme
-                                                     quick-eval
-                                                     &optional template-values src-filename src-buffer)
+     ;; query-server2
+     ((string= codeql-query-server "query-server2")
+      (let* ((query-target
+              (if quick-eval
+                  ;; set a quick eval position if need be, otherwise run the entire query
+                  (cl-destructuring-bind (min . max) (car (region-bounds))
+                    ;; positions in CodeQL are 1-based
+                    (let ((start-line (line-number-at-pos min))
+                          (end-line (line-number-at-pos max))
+                          (start-col (save-excursion (goto-char min) (codeql--lsp-abiding-column)))
+                          (end-col (save-excursion (goto-char max) (codeql--lsp-abiding-column))))
+                      `(:quickEval
+                        (:quickEvalPos
+                         (:fileName ,(codeql--tramp-unwrap query-path)
+                                    :line ,start-line
+                                    :column ,start-col
+                                    :endLine ,end-line
+                                    :endColumn ,end-col)))))
+                ;; any non-null value will trigger a full query run
+                `(:query (:xx ""))))
+             (run-query-params
+              `(:body
+                (:db ,(codeql--file-truename codeql--active-database)
+                     :additionalPacks ,(vconcat codeql--search-paths-buffer-local)
+                     :externalInputs ()
+                     :singletonExternalInputs ,(or template-values '())
+                     :outputPath ,(codeql--tramp-unwrap bqrs-path)
+                     :queryPath ,(codeql--tramp-unwrap query-path)
+                     ;; do we want Datalog Intermediary Language dumps?
+                     ;; https://codeql.github.com/docs/codeql-overview/codeql-glossary/#dil
+                     ;;:dilPath: string
+                     ;;:logPath: string
+                     :target ,query-target)
+                :progressId ,(codeql--query-server-next-progress-id))))
+
+        (message "Running query with additionalPacks %s ..." codeql--search-paths-buffer-local)
+        (cl-multiple-value-bind (id timer)
+            (codeql--jsonrpc-async-request
+             (codeql--query-server-current-or-error)
+             :evaluation/runQuery run-query-params
+             :timeout codeql-query-server-timeout
+             :success-fn
+             (let ((buffer-context buffer-context)
+                   (query-info query-info)
+                   (bqrs-path bqrs-path)
+                   (query-path query-path)
+                   (db-path db-path)
+                   (quick-eval quick-eval)
+                   (src-filename src-filename)
+                   (src-root codeql--database-source-archive-root))
+               (jsonrpc-lambda (&rest params)
+                 (with-current-buffer buffer-context
+                   (codeql--query-server-jsonrpc-unregister-request))
+                 (let ((errors (codeql--query-server2-handle-message params)))
+                   (when errors
+                     (error errors)))
+                 (message "Query run completed, checking results.")
+                 ;; if size is > 0 then we have results to deal with
+                 (let ((bqrs-size (file-attribute-size (file-attributes bqrs-path))))
+                   (if (> bqrs-size 0)
+                       (progn
+                         (with-current-buffer buffer-context
+                           ;; save in query history,  name/kind/id can be nil!
+                           (let ((name (json-pointer-get query-info "/name"))
+                                 (kind (json-pointer-get query-info "/kind"))
+                                 (id (json-pointer-get query-info "/id")))
+                             (let ((timestamp (current-time-string)))
+                               ;; skip templated queries in query history
+                               (unless (codeql--templated-query-p query-path)
+                                 (puthash
+                                  (format "[%s] %s (%s) [%s]"
+                                          timestamp
+                                          (file-name-nondirectory query-path)
+                                          (if quick-eval "quick-eval" "full-query")
+                                          (codeql-query-server-active-database))
+                                  `(:quick-eval ,quick-eval
+                                                :query-path ,query-path
+                                                :bqrs-path ,bqrs-path
+                                                :db-path ,db-path
+                                                :timestamp ,timestamp
+                                                :name ,name
+                                                :kind ,kind
+                                                :id ,id)
+                                  codeql--completed-query-history)))
+                             ;; display results
+                             (codeql-load-bqrs
+                              bqrs-path
+                              query-path
+                              db-path
+                              name
+                              kind
+                              id
+                              src-filename
+                              codeql--database-source-archive-root
+                              src-buffer))))
+                     (message "No query results in %s!" bqrs-path)))))
+             :error-fn
+             (let ((buffer-context buffer-context))
+               (jsonrpc-lambda (&key code message data &allow-other-keys)
+                 (with-current-buffer buffer-context
+                   (codeql--query-server-jsonrpc-unregister-request))
+                 (message "Error %s: %s\n%s\n" code message data)))
+             :deferred :evaluation/runQuery)
+          (codeql--query-server-jsonrpc-register-request
+           id
+           (codeql--query-server-current-or-error)
+           :evaluation/runQuery)))))))
+
+(defun codeql--query-server-request-compile-and-run
+    (buffer-context
+     library-path
+     qlo-path
+     bqrs-path
+     query-path
+     query-info
+     db-path
+     db-scheme
+     quick-eval
+     &optional template-values src-filename src-buffer)
   "Request query compilation from the query server."
 
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
 
   (with-current-buffer buffer-context
     (let*
+        ;; XXX: dedupe when query-server2 is working
         ((query-target
           (if quick-eval
               ;; set a quick eval position if need be, otherwise run the entire query
@@ -2628,55 +2865,70 @@ Our implementation simply returns the thing at point as a candidate."
              :target ,query-target)
             :progressId ,(codeql--query-server-next-progress-id))))
 
-      (message "Compiling query (%s) ..." (if quick-eval "quick-eval" "full-query"))
-
-      (cl-multiple-value-bind (id timer)
-          (codeql--jsonrpc-async-request
+      (cond
+       ;; legacy query-server
+       ((string= codeql-query-server "query-server")
+        (message "Compiling query (%s) ..." (if quick-eval "quick-eval" "full-query"))
+        (cl-multiple-value-bind (id timer)
+            (codeql--jsonrpc-async-request
+             (codeql--query-server-current-or-error)
+             :compilation/compileQuery compile-query-params
+             :timeout codeql-query-server-timeout
+             :success-fn
+             (let ((buffer-context buffer-context)
+                   (bqrs-path bqrs-path)
+                   (qlo-path qlo-path)
+                   (query-path query-path)
+                   (query-info query-info)
+                   (db-path db-path)
+                   (quick-eval quick-eval)
+                   (template-values template-values)
+                   (src-filename src-filename))
+               (jsonrpc-lambda (&key messages &allow-other-keys)
+                 (with-current-buffer buffer-context
+                   (codeql--query-server-jsonrpc-unregister-request))
+                 (message "Compilation completed, checking results.")
+                 (let ((abort-run-query nil))
+                   (seq-map (lambda (m)
+                              (cl-destructuring-bind (&key severity message &allow-other-keys)
+                                  m
+                                (message "[compilation/compileQuery] severity %s: %s" severity message)
+                                (when (eql severity 0)
+                                  (message "[compilation/compileQuery] Aborting query! severity 0: %s" message)
+                                  (setq abort-run-query t)))) messages)
+                   (unless abort-run-query
+                     ;; note: this is a nested jsonrpc request, maintain buffer-local context
+                     (codeql--query-server-request-run buffer-context qlo-path
+                                                       bqrs-path query-path
+                                                       query-info
+                                                       db-path
+                                                       quick-eval
+                                                       template-values
+                                                       src-filename
+                                                       src-buffer)))))
+             :error-fn
+             (let ((buffer-context buffer-context))
+               (jsonrpc-lambda (&key code message data &allow-other-keys)
+                 (with-current-buffer buffer-context
+                   (codeql--query-server-jsonrpc-unregister-request))
+                 (message "Error %s: %s\n%s\n" code message data)))
+             :deferred :compilation/compileQuery)
+          ;; register this request so we can cancel it if need be
+          (codeql--query-server-jsonrpc-register-request
+           id
            (codeql--query-server-current-or-error)
-           :compilation/compileQuery compile-query-params
-           :timeout codeql-query-server-timeout
-           :success-fn
-           (let ((buffer-context buffer-context)
-                 (bqrs-path bqrs-path)
-                 (qlo-path qlo-path)
-                 (query-path query-path)
-                 (query-info query-info)
-                 (db-path db-path)
-                 (quick-eval quick-eval)
-                 (template-values template-values)
-                 (src-filename src-filename))
-             (jsonrpc-lambda (&key messages &allow-other-keys)
-               (with-current-buffer buffer-context
-                 (codeql--query-server-jsonrpc-unregister-request))
-               (message "Compilation completed, checking results.")
-               (let ((abort-run-query nil))
-                 (seq-map (lambda (m)
-                            (cl-destructuring-bind (&key severity message &allow-other-keys)
-                                m
-                              (message "[compilation/compileQuery] severity %s: %s" severity message)
-                              (when (eql severity 0)
-                                (message "[compilation/compileQuery] Aborting query! severity 0: %s" message)
-                                (setq abort-run-query t)))) messages)
-                 (unless abort-run-query
-                   ;; note: this is a nested jsonrpc request, maintain buffer-local context
-                   (codeql--query-server-request-run buffer-context qlo-path
-                                                     bqrs-path query-path
-                                                     query-info
-                                                     db-path
-                                                     quick-eval
-                                                     template-values
-                                                     src-filename
-                                                     src-buffer)))))
-           :error-fn
-           (jsonrpc-lambda (&key code message data &allow-other-keys)
-             (codeql--query-server-jsonrpc-unregister-request)
-             (message "Error %s: %s %s" code message data))
-           :deferred :compilation/compileQuery)
-        ;; register this request so we can cancel it if need be
-        (codeql--query-server-jsonrpc-register-request
-         id
-         (codeql--query-server-current-or-error)
-         :compilation/compileQuery)))))
+           :compilation/compileQuery)))
+
+       ;; query-server2, compilation is part of the runQuery request
+       ((string= codeql-query-server "query-server2")
+        (codeql--query-server-request-run buffer-context qlo-path
+                                          bqrs-path query-path
+                                          query-info
+                                          db-path
+                                          quick-eval
+                                          template-values
+                                          src-filename
+                                          src-buffer))))))
 
 (defun codeql--query-server-run-query-from-path (query-path quick-eval &optional template-values src-filename src-buffer)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -2851,7 +3103,13 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                   (transient-args transient-current-command)
                   ram-options
                   ;; non-user arguments go here
-                  '("--require-db-registration"))))
+                  (cond
+                   ;; old query-server options
+                   ((string= codeql-query-server "query-server")
+                    '("--require-db-registration"))
+                   ;; new query-server options
+                   ((string= codeql-query-server "query-server2")
+                    nil)))))
       (cl-assert ram-options t)
       ;; spawn the server process
       (let* ((name (format "CODEQL Query Server (%s%s -> %s)"
@@ -2862,7 +3120,13 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
                            (or (file-name-nondirectory (buffer-file-name)) "(no file name)")))
              (cmd (append
                    codeql--cli-buffer-local
-                   (list "execute" codeql-query-server)
+                   (list "execute"
+                         ;; determine which query server to use
+                         ;; prefer query-server2 when available
+                         ;; don't confuse this with codeql--query-server, which is the rpc connection
+                         (or codeql-query-server
+                             (setq codeql-query-server
+                                   (codeql--resolve-query-server))))
                    args)))
         (message "Starting query server.")
         ;; manage these buffer local
