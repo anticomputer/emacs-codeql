@@ -1682,12 +1682,17 @@ Group 8 matches the closing parenthesis.")
              do
              (message "Resolved templated query %s to %s" query-name full-path)
              (let ((template-values
-                    `(:selectedSourceFile
-                      (:values
-                       (:tuples
-                        [(:stringValue
-                          ,(codeql--archive-path-from-org-filename
-                            (codeql--tramp-unwrap src-filename)))])))))
+                    (cond ((string= codeql-query-server "query-server")
+                           `(:selectedSourceFile
+                             (:values
+                              (:tuples
+                               [(:stringValue
+                                 ,(codeql--archive-path-from-org-filename
+                                   (codeql--tramp-unwrap src-filename)))]))))
+                          ((string= codeql-query-server "query-server2")
+                           `(:selectedSourceFile
+                             ,(codeql--archive-path-from-org-filename
+                               (codeql--tramp-unwrap src-filename)))))))
                (codeql--query-server-run-query-from-path
                 full-path
                 nil
@@ -2682,6 +2687,7 @@ Our implementation simply returns the thing at point as a candidate."
            id
            (codeql--query-server-current-or-error)
            :evaluation/runQueries))))
+
      ;; query-server2
      ((string= codeql-query-server "query-server2")
       (let* ((query-target
@@ -2707,6 +2713,7 @@ Our implementation simply returns the thing at point as a candidate."
                 (:db ,(codeql--file-truename codeql--active-database)
                      :additionalPacks ,(vconcat codeql--search-paths-buffer-local)
                      :externalInputs ()
+                     :singletonExternalInputs ,(or template-values '())
                      :outputPath ,(codeql--tramp-unwrap bqrs-path)
                      :queryPath ,(codeql--tramp-unwrap query-path)
                      ;; do we want Datalog Intermediary Language dumps?
@@ -2716,7 +2723,7 @@ Our implementation simply returns the thing at point as a candidate."
                      :target ,query-target)
                 :progressId ,(codeql--query-server-next-progress-id))))
 
-        (message "Running query ...")
+        (message "Running query with additionalPacks %s ..." codeql--search-paths-buffer-local)
         (cl-multiple-value-bind (id timer)
             (codeql--jsonrpc-async-request
              (codeql--query-server-current-or-error)
