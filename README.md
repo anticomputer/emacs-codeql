@@ -25,7 +25,6 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
 
 - Emacs 29.1+ (built-in tree-sitter)
   - transient
-  - projectile
 
 - Emacs 27.1+ (external tree-sitter)
   - transient
@@ -33,7 +32,6 @@ An emacs package for writing and testing [CodeQL](https://codeql.github.com/) qu
   - tree-sitter-langs
   - tree-sitter-indent
   - aggressive-indent
-  - projectile
   - eglot
 
 - CodeQL CLI 2.12.0+
@@ -54,8 +52,7 @@ Emacs 29.1+ comes with `use-package`, `tree-sitter` and `eglot` built-in, which 
   :demand t
   :init
   (setq codeql-transient-binding "C-c q")
-  (setq codeql-configure-eglot-lsp t)
-  (setq codeql-configure-projectile t))
+  (setq codeql-configure-eglot-lsp t))
 ```
 
 ### Recommended install method (Emacs 28 and below)
@@ -73,8 +70,7 @@ Emacs 29.1+ comes with `use-package`, `tree-sitter` and `eglot` built-in, which 
   :demand t
   :init
   (setq codeql-transient-binding "C-c q")
-  (setq codeql-configure-eglot-lsp t)
-  (setq codeql-configure-projectile t))
+  (setq codeql-configure-eglot-lsp t))
 ```
 
 ### Alternative install methods
@@ -87,7 +83,6 @@ You can clone this repository and place it into your emacs `load-path`, you'll w
 ;; initialization options
 (setq codeql-transient-binding "C-c q")
 (setq codeql-configure-eglot-lsp t)
-(setq codeql-configure-projectile t)
 (require 'emacs-codeql)
 ```
 
@@ -106,15 +101,14 @@ Users of `straight.el` can use the below `use-package` declaration:
   :demand t
   :init
   (setq codeql-transient-binding "C-c q")
-  (setq codeql-configure-eglot-lsp t)
-  (setq codeql-configure-projectile t))
+  (setq codeql-configure-eglot-lsp t))
 ```
 
 If you are using [`straight.el`](https://github.com/radian-software/straight.el), you will likely face an issue preparing the tree-sitter-lang artifact, as the path from which `emacs-codeql` copies the appropriate artifact to the `tree-sitter-langs--bin-dir` may not be correct. In this case, you can workaround this issue by manually copying `$HOME/.emacs.d/straight/repos/emacs-codeql//bin/{your-system-type}/{your-arch}/ql.*`to the directory that `tree-sitter-langs--bin-dir` points to.
 
 ### Getting Started with CodeQL
 
-The quickest way into painfree CodeQL development is to use the [GitHub CLI CodeQL extension](https://github.com/github/gh-codeql) to manage your CodeQL toolchain dependencies and then use [CodeQL Packs](https://codeql.github.com/docs/codeql-cli/about-codeql-packs/) and (optionally) [CodeQL Workspaces](https://codeql.github.com/docs/codeql-cli/about-codeql-workspaces/) for your query development. 
+The quickest way into painfree CodeQL development is to use the [GitHub CLI CodeQL extension](https://github.com/github/gh-codeql) to manage your CodeQL toolchain dependencies and then use [CodeQL Packs](https://codeql.github.com/docs/codeql-cli/about-codeql-packs/) and (optionally) [CodeQL Workspaces](https://codeql.github.com/docs/codeql-cli/about-codeql-workspaces/) for your query development.
 
 Note: If you opt to not use the gh cli and install the CodeQL CLI yourself, skip to step 5 and remove any `gh` prefixes from the example commands.
 
@@ -138,15 +132,11 @@ To get started:
 
 You can find the latest versions of the standard CodeQL packs at https://github.com/orgs/codeql/packages
 
-For more details about how to properly create and work with CodeQL packs please see https://codeql.github.com/docs/codeql-cli/creating-and-working-with-codeql-packs/
+For more details about how to properly create and work with CodeQL packs please see https://codeql.github.com/docs/codeql-cli/creating-and-working-with-codeql-packs/ and the [CodeQL packs documentation](https://codeql.github.com/docs/codeql-cli/about-ql-packs/).
 
 For writing queries that only depend on standard CodeQL libraries, you do not have to create a workspace. However, for more advanced CodeQL library and query development, we recommend you use [CodeQL workspaces](https://codeql.github.com/docs/codeql-cli/about-codeql-workspaces/) to define and manage your CodeQL project dependencies.
 
 ## Using `emacs-codeql`
-
-Make sure that you enable the `projectile` configuration option if you intend to use LSP support via `eglot`, as `eglot` needs to send the project root as part of codeql langserver `workspaceFolders` initialization.
-
-See [CodeQL packs documentation](https://codeql.github.com/docs/codeql-cli/about-ql-packs/) for additional information.
 
 ### Writing and Running Queries
 
@@ -260,11 +250,7 @@ With this package in place, you can just TAB to get a list of your available Cod
 
 ### Language Server Protocol
 
-`emacs-codeql` performs very well with `eglot`. Due to the codeql language server relying on `workspaceFolders` support, `eglot 20220326.2143` or newer is required from MELPA, which includes the basic project-root based `workspaceFolders` introduced in: https://github.com/joaotavora/eglot/commit/9eb9353fdc15c91a66ef8f4e53e18b22aa0870cd and a compatible version of `eglot` ships with Emacs 29+ by default.
-
-Projectile and eglot configurations are included in `emacs-codeql` and controlled by the `codeql-configure-eglot-lsp` and `codeql-configure-projectile` variables, respectively.
-
-It is HIGHLY recommended to enable both eglot and projectile configurations, as they depend on each other and provide the most pleasant query editing experience.
+`emacs-codeql` performs very well with `eglot`. Due to the codeql language server relying on `workspaceFolders` support, `eglot 20220326.2143` or newer is required from MELPA, which includes the basic project-root based `workspaceFolders` introduced in: https://github.com/joaotavora/eglot/commit/9eb9353fdc15c91a66ef8f4e53e18b22aa0870cd and a compatible version of `eglot` ships with Emacs 29+ by default. An eglot configuration for the CodeQL LSP is included in `emacs-codeql` and controlled by the `codeql-configure-eglot-lsp` variable.
 
 `emacs-codeql` has not been tested in conjunction with `lsp-mode`.
 
