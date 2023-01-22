@@ -398,23 +398,12 @@ Leave nil for default.")
                   unless (member path codeql-search-paths)
                   collect path)))
 
-  ;; fallback for when library paths don't work
-  ;; (message "Resolving search paths from qlpack in PATH.")
-  ;; (let ((qlpack-paths (codeql--resolve-qlpack-paths
-  ;;                      (codeql--tramp-unwrap
-  ;;                       (expand-file-name
-  ;;                        (codeql--tramp-wrap default-directory))))))
-  ;;   (cl-loop for pack-paths in qlpack-paths do
-  ;;            ;;(message "Adding search paths for qlpack: %s" pack-paths)
-  ;;            (setq codeql--search-paths-buffer-local
-  ;;                  (append pack-paths codeql--search-paths-buffer-local))))
-
   ;; library paths should contain everything we need in terms of search paths
   (let ((library-paths
          (codeql--resolve-library-paths
           (codeql--tramp-unwrap
            (expand-file-name
-            (codeql--tramp-wrap default-directory))))))
+            (codeql--tramp-wrap (buffer-file-name)))))))
     (setq codeql--search-paths-buffer-local
           (append
            codeql--search-paths-buffer-local
@@ -817,13 +806,15 @@ Provides backwards references into the AST buffer from the source file.")
     (if (string-match-p "query-server2" help) "query-server2" "query-server")))
 
 (defun codeql--resolve-query-paths (query-path)
-  "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH."
+  "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH.
+
+This version is used as part of actual query resolution and sets buffer local
+context variables."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   ;; only resolve once for current query buffer
   (unless (and codeql--library-path codeql--dbscheme)
     (message "Resolving query paths.")
-    ;; we don't need to use --additional-packs since we already offer search path precedence control
-    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --search-path=%s --query=%s"
+    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --additional-packs=%s --query=%s"
                         (codeql--cli-buffer-local-as-string) (codeql--search-path)
                         (codeql--tramp-unwrap query-path)))
            (json (codeql--shell-command-to-string cmd)))
@@ -837,11 +828,14 @@ Provides backwards references into the AST buffer from the source file.")
   ;; nil indicates there was an error resolving these
   (and codeql--library-path codeql--dbscheme))
 
-(defun codeql--resolve-library-paths (dir)
-  "Resolve library paths for DIR."
+(defun codeql--resolve-library-paths (query-path)
+  "Resolve library paths for QUERY-PATH.
+
+This version is used in early buffer local init of search paths and has no
+side effects."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --dir=%s"
-                      (codeql--cli-buffer-local-as-string) dir))
+  (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --query=%s"
+                      (codeql--cli-buffer-local-as-string) query-path))
          (json (codeql--shell-command-to-string cmd)))
     (when json
       (condition-case nil
@@ -2604,6 +2598,7 @@ Our implementation simply returns the thing at point as a candidate."
                                          bqrs-path
                                          query-path
                                          query-info
+                                         library-path
                                          db-path
                                          quick-eval
                                          &optional template-values src-filename src-buffer)
@@ -2723,7 +2718,7 @@ Our implementation simply returns the thing at point as a candidate."
              (run-query-params
               `(:body
                 (:db ,(codeql--file-truename codeql--active-database)
-                     :additionalPacks ,(vconcat codeql--search-paths-buffer-local)
+                     :additionalPacks ,library-path
                      :externalInputs ()
                      :singletonExternalInputs ,(or template-values '())
                      :outputPath ,(codeql--tramp-unwrap bqrs-path)
@@ -2735,7 +2730,7 @@ Our implementation simply returns the thing at point as a candidate."
                      :target ,query-target)
                 :progressId ,(codeql--query-server-next-progress-id))))
 
-        (message "Running query with additionalPacks %s ..." codeql--search-paths-buffer-local)
+        (message "Running query ...")
         (cl-multiple-value-bind (id timer)
             (codeql--jsonrpc-async-request
              (codeql--query-server-current-or-error)
@@ -2880,6 +2875,7 @@ Our implementation simply returns the thing at point as a candidate."
                    (qlo-path qlo-path)
                    (query-path query-path)
                    (query-info query-info)
+                   (library-path library-path)
                    (db-path db-path)
                    (quick-eval quick-eval)
                    (template-values template-values)
@@ -2901,6 +2897,7 @@ Our implementation simply returns the thing at point as a candidate."
                      (codeql--query-server-request-run buffer-context qlo-path
                                                        bqrs-path query-path
                                                        query-info
+                                                       library-path
                                                        db-path
                                                        quick-eval
                                                        template-values
@@ -2924,6 +2921,7 @@ Our implementation simply returns the thing at point as a candidate."
         (codeql--query-server-request-run buffer-context qlo-path
                                           bqrs-path query-path
                                           query-info
+                                          library-path
                                           db-path
                                           quick-eval
                                           template-values
