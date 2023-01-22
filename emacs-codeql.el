@@ -310,13 +310,27 @@ Leave nil for default.")
   "Return any currently configured codeql cli search paths."
   (mapconcat #'identity codeql--search-paths-buffer-local ":"))
 
-(defun codeql--find-project-root ()
-  (cl-assert (eq major-mode 'ql-tree-sitter-mode))
+;; project.el integration for eglot
+
+(defun codeql--find-project-root (path)
   (let ((root
-         (or (locate-dominating-file (buffer-file-name) "qlpack.yml")
-             (locate-dominating-file (buffer-file-name) "codeql-pack.yml"))))
+         (or (locate-dominating-file path "qlpack.yml")
+             (locate-dominating-file path "codeql-pack.yml"))))
     (when root (message "Found project root: %s" root)
           root)))
+
+(defun project-codeql (dir)
+  (let ((root (codeql--find-project-root dir)))
+    (when root
+      (list 'codeql root))))
+
+(cl-defmethod project-root ((project (head codeql)))
+  (nth 1 project))
+
+(cl-defmethod project-external-roots ((project (head codeql)))
+  codeql--search-paths-buffer-local)
+
+(add-to-list 'project-find-functions #'project-codeql)
 
 ;; Eglot configuration
 
@@ -401,7 +415,7 @@ Leave nil for default.")
 
     ;; this is the root of a new codeql project that we opened ourselves
     (setq default-directory
-          (or (codeql--find-project-root)
+          (or (codeql--find-project-root (buffer-file-name))
               ;; if we can't find a project root, assume cwd is project root
               (file-name-directory (buffer-file-name))))
 
@@ -435,6 +449,7 @@ Leave nil for default.")
                      codeql--search-paths-buffer-local))))
 
   ;; now that we have all our search paths, let's try and start up our LSP server
+  ;; this will rely on our project.el integration to determine the workspace paths
   (condition-case nil
       (when (and codeql-configure-eglot-lsp
                  (or (and (file-remote-p (buffer-file-name))
