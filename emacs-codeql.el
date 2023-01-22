@@ -229,17 +229,11 @@ See https://github.com/github/gh-codeql for more information."
 (defvar codeql-cli (executable-find "codeql")
   "Path to codeql-cli")
 
-(defvar codeql-search-paths
-  ;; file expansion happens buffer-local so that these work remotely as well
-  (list "./")
+(defvar codeql-search-paths '()
   "codeql cli library search paths that require search precedence.
 
 This provides you with search path precedence control and should not be used for
-standard search path configurations.
-
-The default value of . ensures that either the project root, or the CWD of the
-current query file is part of your search path at a higher precedence than the
-configured paths.")
+standard search path configurations.")
 
 (defvar-local codeql-query-server nil
   "Which query-server type to use.
@@ -326,26 +320,39 @@ Leave nil for default.")
 
 ;; Eglot configuration
 
-(defun codeql--lang-server-contact (_i)
-  "Return the currently configured LSP server parameters."
-
-  (cl-assert codeql--cli-buffer-local t)
-
-  (let ((lsp-server-cmd
-         (append codeql--cli-buffer-local
-                 (list "execute" "language-server"
-                       (format "--search-path=%s" (codeql--search-path))
-                       "--check-errors" "ON_CHANGE"
-                       "-q"))))
-    (message "Using LSP server cmd: %s" lsp-server-cmd)
-    lsp-server-cmd))
-
 (when codeql-configure-eglot-lsp
   (require 'eglot)
 
+  (defun codeql--lang-server-contact (_i)
+    "Return the currently configured LSP server parameters."
+    (cl-assert codeql--cli-buffer-local t)
+    (let ((lsp-server-cmd
+           (append codeql--cli-buffer-local
+                   (list "execute" "language-server"
+                         (format "--search-path=%s" (codeql--search-path))
+                         "--check-errors" "ON_CHANGE"
+                         "-q"))))
+      (message "Using LSP server cmd: %s" lsp-server-cmd)
+      lsp-server-cmd))
+
   ;; only configure eglot for codeql when we have the cli available in PATH
   (add-to-list 'eglot-server-programs
-               `(ql-tree-sitter-mode . ,#'codeql--lang-server-contact)))
+               `(ql-tree-sitter-mode . ,#'codeql--lang-server-contact))
+
+  ;; hack to keep eglot project search spaces consistent on following xrefs
+  (defvar codeql--eglot-override nil)
+
+  (defun codeql-xref-location-marker (orig-fun &rest args)
+    (cond ((eq major-mode 'ql-tree-sitter-mode)
+           (let* ((codeql--eglot-override
+                   (list default-directory
+                         codeql--search-paths-buffer-local)))
+             (apply orig-fun args)))
+          (t (apply orig-fun args))))
+
+  ;; this advice allows us to implement some special behavior when following
+  ;; xrefs from the root of a codeql buffer
+  (advice-add 'xref-location-marker :around #'codeql-xref-location-marker))
 
 (defun codeql--get-cli-version ()
   ;; used in setup for ql-tree-sitter-mode so we can not assert the mode here yet.
@@ -354,6 +361,7 @@ Leave nil for default.")
 
 (defun codeql--buffer-local-init-hook ()
   "Set up a codeql buffer context correctly."
+
   ;; use whatever the current config for codeql-cli and codeql-search-paths is
   (setq codeql--cli-buffer-local (list codeql-cli))
 
@@ -380,52 +388,51 @@ Leave nil for default.")
   ;; ensure we were able to resolve _A_ path for the codeql cli local|remote execution
   (cl-assert codeql--cli-buffer-local t)
 
-  ;; always set default-directory to project root
-  (setq default-directory
-        (or (codeql--find-project-root)
-            ;; if we can't find a project root, assume cwd is project root
-            (file-name-directory (buffer-file-name))))
-
   ;; now that default-directory points where it should, resolve our search paths
-  (message "Resolving search paths from configuration.")
-  (setq codeql--search-paths-buffer-local
-        (append
-         ;; emacs-codeql configs always have precedence
-         (codeql--search-paths-from-emacs-config)
-         ;; only add new paths that weren't already configured to prevent double-hits, this can be nil
-         (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
-                  for path in config-paths
-                  unless (member path codeql-search-paths)
-                  collect path)))
+  (if (and (boundp 'codeql--eglot-override) codeql--eglot-override)
+      ;; this buffer is an xref follow from an already open project
+      ;; so we just replicate the search path state of the existing project
+      ;; which will prevent us from trying to start a bunch of different
+      ;; language servers when navigating into xref'd qlpack roots
+      (progn
+        (message "Replicating search paths and project root from parent project.")
+        (setq default-directory (car codeql--eglot-override))
+        (setq codeql--search-paths-buffer-local (cadr codeql--eglot-override)))
 
-  ;; fallback for when library paths don't work
-  ;; (message "Resolving search paths from qlpack in PATH.")
-  ;; (let ((qlpack-paths (codeql--resolve-qlpack-paths
-  ;;                      (codeql--tramp-unwrap
-  ;;                       (expand-file-name
-  ;;                        (codeql--tramp-wrap default-directory))))))
-  ;;   (cl-loop for pack-paths in qlpack-paths do
-  ;;            ;;(message "Adding search paths for qlpack: %s" pack-paths)
-  ;;            (setq codeql--search-paths-buffer-local
-  ;;                  (append pack-paths codeql--search-paths-buffer-local))))
+    ;; this is the root of a new codeql project that we opened ourselves
+    (setq default-directory
+          (or (codeql--find-project-root)
+              ;; if we can't find a project root, assume cwd is project root
+              (file-name-directory (buffer-file-name))))
 
-  ;; library paths should contain everything we need in terms of search paths
-  (let ((library-paths
-         (codeql--resolve-library-paths
-          (codeql--tramp-unwrap
-           (expand-file-name
-            (codeql--tramp-wrap default-directory))))))
+    (message "Resolving search paths from configuration.")
     (setq codeql--search-paths-buffer-local
           (append
-           codeql--search-paths-buffer-local
-           (cl-loop for library-path across library-paths
-                    unless (member library-path codeql--search-paths-buffer-local)
-                    collect library-path))))
+           ;; emacs-codeql configs always have precedence
+           (codeql--search-paths-from-emacs-config)
+           ;; only add new paths that weren't already configured to prevent double-hits, this can be nil
+           (cl-loop with config-paths = (codeql--search-paths-from-codeql-config)
+                    for path in config-paths
+                    unless (member path codeql-search-paths)
+                    collect path)))
 
-  ;; dedupe and remove nil from search paths
-  (setq codeql--search-paths-buffer-local
-        (delq nil (delete-dups
-                   codeql--search-paths-buffer-local)))
+    ;; library paths should contain everything we need in terms of search paths
+    (let ((library-paths
+           (codeql--resolve-library-paths
+            (codeql--tramp-unwrap
+             (expand-file-name
+              (codeql--tramp-wrap (buffer-file-name)))))))
+      (setq codeql--search-paths-buffer-local
+            (append
+             codeql--search-paths-buffer-local
+             (cl-loop for library-path across library-paths
+                      unless (member library-path codeql--search-paths-buffer-local)
+                      collect library-path))))
+
+    ;; dedupe and remove nil from search paths
+    (setq codeql--search-paths-buffer-local
+          (delq nil (delete-dups
+                     codeql--search-paths-buffer-local))))
 
   ;; now that we have all our search paths, let's try and start up our LSP server
   (condition-case nil
@@ -817,13 +824,15 @@ Provides backwards references into the AST buffer from the source file.")
     (if (string-match-p "query-server2" help) "query-server2" "query-server")))
 
 (defun codeql--resolve-query-paths (query-path)
-  "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH."
+  "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH.
+
+This version is used as part of actual query resolution and sets buffer local
+context variables."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   ;; only resolve once for current query buffer
   (unless (and codeql--library-path codeql--dbscheme)
     (message "Resolving query paths.")
-    ;; we don't need to use --additional-packs since we already offer search path precedence control
-    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --search-path=%s --query=%s"
+    (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --additional-packs=%s --query=%s"
                         (codeql--cli-buffer-local-as-string) (codeql--search-path)
                         (codeql--tramp-unwrap query-path)))
            (json (codeql--shell-command-to-string cmd)))
@@ -837,11 +846,14 @@ Provides backwards references into the AST buffer from the source file.")
   ;; nil indicates there was an error resolving these
   (and codeql--library-path codeql--dbscheme))
 
-(defun codeql--resolve-library-paths (dir)
-  "Resolve library paths for DIR."
+(defun codeql--resolve-library-paths (query-path)
+  "Resolve library paths for QUERY-PATH.
+
+This version is used in early buffer local init of search paths and has no
+side effects."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --dir=%s"
-                      (codeql--cli-buffer-local-as-string) dir))
+  (let* ((cmd (format "%s resolve library-path -v --log-to-stderr --format=json --query=%s"
+                      (codeql--cli-buffer-local-as-string) query-path))
          (json (codeql--shell-command-to-string cmd)))
     (when json
       (condition-case nil
@@ -2604,6 +2616,7 @@ Our implementation simply returns the thing at point as a candidate."
                                          bqrs-path
                                          query-path
                                          query-info
+                                         library-path
                                          db-path
                                          quick-eval
                                          &optional template-values src-filename src-buffer)
@@ -2723,7 +2736,7 @@ Our implementation simply returns the thing at point as a candidate."
              (run-query-params
               `(:body
                 (:db ,(codeql--file-truename codeql--active-database)
-                     :additionalPacks ,(vconcat codeql--search-paths-buffer-local)
+                     :additionalPacks ,library-path
                      :externalInputs ()
                      :singletonExternalInputs ,(or template-values '())
                      :outputPath ,(codeql--tramp-unwrap bqrs-path)
@@ -2735,7 +2748,7 @@ Our implementation simply returns the thing at point as a candidate."
                      :target ,query-target)
                 :progressId ,(codeql--query-server-next-progress-id))))
 
-        (message "Running query with additionalPacks %s ..." codeql--search-paths-buffer-local)
+        (message "Running query ...")
         (cl-multiple-value-bind (id timer)
             (codeql--jsonrpc-async-request
              (codeql--query-server-current-or-error)
@@ -2880,6 +2893,7 @@ Our implementation simply returns the thing at point as a candidate."
                    (qlo-path qlo-path)
                    (query-path query-path)
                    (query-info query-info)
+                   (library-path library-path)
                    (db-path db-path)
                    (quick-eval quick-eval)
                    (template-values template-values)
@@ -2901,6 +2915,7 @@ Our implementation simply returns the thing at point as a candidate."
                      (codeql--query-server-request-run buffer-context qlo-path
                                                        bqrs-path query-path
                                                        query-info
+                                                       library-path
                                                        db-path
                                                        quick-eval
                                                        template-values
@@ -2924,6 +2939,7 @@ Our implementation simply returns the thing at point as a candidate."
         (codeql--query-server-request-run buffer-context qlo-path
                                           bqrs-path query-path
                                           query-info
+                                          library-path
                                           db-path
                                           quick-eval
                                           template-values
