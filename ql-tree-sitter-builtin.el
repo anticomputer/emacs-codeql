@@ -86,6 +86,11 @@
    '(["and" "or" "not"] @font-lock-keyword-face)
 
    :language 'ql
+   :feature 'operator
+   '(["<" "<=" "=" ">" ">=" "-" "!=" "/" "*" "%" "+" "::"]
+     @font-lock-keyword-face)
+
+   :language 'ql
    :feature 'attribute
    '((annotName) @font-lock-keyword-face)
 
@@ -143,11 +148,6 @@
      (module name: (moduleName) @font-lock-variable-name-face))
 
    ;; these are all non-standard font lock faces, only used in level 4
-
-   :language 'ql
-   :feature 'operator
-   '(["<" "<=" "=" ">" ">=" "-" "!=" "/" "*" "%" "+" "::"]
-     @font-lock-operator-face)
 
    :language 'ql
    :feature 'number
@@ -226,11 +226,11 @@
                    conditional
                    function
                    attribute
-                   keyword-operator)
+                   operator)
                   ;; all features enabled (4)
                   (import
                    number
-                   operator
+                   keyword-operator
                    punctuation-bracket
                    punctuation-delimiter)))
     ;; navigation
