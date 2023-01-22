@@ -98,6 +98,7 @@
 (require 'org)
 (require 'ol)
 (require 'files)
+(require 'project)
 
 ;; bundled
 (require 'json-pointer)
@@ -313,11 +314,8 @@ Leave nil for default.")
 ;; project.el integration for eglot
 
 (defun codeql--find-project-root (path)
-  (let ((root
-         (or (locate-dominating-file path "qlpack.yml")
-             (locate-dominating-file path "codeql-pack.yml"))))
-    (when root (message "Found project root: %s" root)
-          root)))
+  (or (locate-dominating-file path "qlpack.yml")
+      (locate-dominating-file path "codeql-pack.yml")))
 
 (defun project-codeql (dir)
   (let ((root (codeql--find-project-root dir)))
