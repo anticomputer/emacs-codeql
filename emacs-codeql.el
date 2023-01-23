@@ -1946,23 +1946,24 @@ a codeql database source archive."
     (unless (and (buffer-file-name)
                  (file-remote-p (buffer-file-name))
                  (not codeql-enable-remote-xrefs))
-      (if (and (gethash (buffer-file-name) codeql--references-cache)
-               (gethash (buffer-file-name) codeql--definitions-cache))
-          (progn
-            (codeql--set-local-xref-bindings)
-            'codeql)
-        ;; see if this file SHOULD have codeql refs and defs and the local bindings
-        (when (buffer-live-p codeql--org-query-buffer)
-          (let ((src-filename (buffer-file-name))
-                (src-buffer (current-buffer)))
-            (with-current-buffer codeql--org-query-buffer
-              (let ((language (intern (format ":%s" codeql--active-database-language))))
-                (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory src-filename))
-                (codeql--run-templated-query language "localDefinitions" src-filename src-buffer)
-                (codeql--run-templated-query language "localReferences" src-filename src-buffer))))
-          ;; we want our bindings available
-          (codeql--set-local-xref-bindings)
-          'codeql)))))
+
+      (cond ((and (gethash (buffer-file-name) codeql--references-cache)
+                  (gethash (buffer-file-name) codeql--definitions-cache))
+             (codeql--set-local-xref-bindings)
+             'codeql)
+            ((buffer-live-p codeql--org-query-buffer)
+             (let ((src-filename (buffer-file-name))
+                   (src-buffer (current-buffer)))
+               (with-current-buffer codeql--org-query-buffer
+                 (let ((language (intern (format ":%s" codeql--active-database-language))))
+                   (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory src-filename))
+                   (codeql--run-templated-query language "localDefinitions" src-filename src-buffer)
+                   (codeql--run-templated-query language "localReferences" src-filename src-buffer)))
+               ;; we want our bindings available
+               (codeql--set-local-xref-bindings)
+               'codeql))
+            (t (message "No xref cache or query buffer available, xref support deactivated.")
+               nil)))))
 
 (cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
   "Return the thing at point."
@@ -2104,19 +2105,26 @@ Our implementation simply returns the thing at point as a candidate."
       ;; XXX: pending which results are being navigated, so this is
       ;; XXX: probably ok in practice
 
-      (when-let ((query-buffer codeql--org-query-buffer)
-                 (src-buffer (codeql--find-file-other-window filename)))
-        (with-current-buffer src-buffer
-          (setq codeql--org-query-buffer query-buffer)
-          (widen)
-          ;; codeql is 1 based, eglot calcs are 0 based, adjust accordingly
-          (when (and column line)
-            (goto-char (codeql--eglot--lsp-position-to-point
-                        `(;; align
-                          :line ,(1- (string-to-number line))
-                          :character ,(1- (string-to-number column))))))
-          ;; enable our xref backend, this kicks in templated queries for refs and defs
-          (codeql-xref-backend))))))
+      (let ((query-buffer codeql--org-query-buffer))
+        (when-let ((src-buffer (codeql--find-file-other-window filename)))
+          (with-current-buffer src-buffer
+            ;; this will be nil for org history, which means we lose any
+            ;; dynamic xref capabilities and things of that nature ...
+            ;; we could restore the state for the org-file on find-file
+            ;; but that's making the assumption that the active database
+            ;; is still related to the query history I suppose?
+            (unless query-buffer
+              (message "No active query buffer for these results, opened from history?"))
+            (setq codeql--org-query-buffer query-buffer)
+            (widen)
+            ;; codeql is 1 based, eglot calcs are 0 based, adjust accordingly
+            (when (and column line)
+              (goto-char (codeql--eglot--lsp-position-to-point
+                          `(;; align
+                            :line ,(1- (string-to-number line))
+                            :character ,(1- (string-to-number column))))))
+            ;; enable our xref backend, this kicks in templated queries for refs and defs
+            (codeql-xref-backend)))))))
 
 (org-link-set-parameters "codeql" :follow #'codeql--org-open-file-link)
 
