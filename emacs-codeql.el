@@ -2089,9 +2089,19 @@ Our implementation simply returns the thing at point as a candidate."
       (if (listp value)
 	  (progn
 	    (setq value (nreverse value))
+            ;; prevent folks from editing database source code
+            (with-current-buffer (car value)
+              (setq buffer-read-only t))
 	    (switch-to-buffer-other-window (car value))
-            (mapc 'switch-to-buffer (cdr value))
+            (mapc (lambda (buf)
+                    (with-current-buffer buf
+                      (setq buffer-read-only t))
+                    (switch-to-buffer buf))
+                  (cdr value))
 	    value)
+        ;; prevent folks from editing database source code
+        (with-current-buffer value
+          (setq buffer-read-only t))
         (switch-to-buffer-other-window value)))))
 
 (defun codeql--org-open-file-link (filename)
