@@ -1966,10 +1966,10 @@ a codeql database source archive."
             'codeql)
         ;; see if this file SHOULD have codeql refs and defs and the local bindings
         (when (buffer-live-p codeql--org-query-buffer)
-          (with-current-buffer codeql--org-query-buffer
-            (let ((language (intern (format ":%s" codeql--active-database-language)))
-                  (src-filename (buffer-file-name))
-                  (src-buffer (current-buffer)))
+          (let ((language (intern (format ":%s" codeql--active-database-language)))
+                (src-filename (buffer-file-name))
+                (src-buffer (current-buffer)))
+            (with-current-buffer codeql--org-query-buffer
               (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory src-filename))
               (codeql--run-templated-query language "localDefinitions" src-filename src-buffer)
               (codeql--run-templated-query language "localReferences" src-filename src-buffer)))
