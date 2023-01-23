@@ -631,8 +631,15 @@ If optional MARKER, return a marker instead"
   (_server (method (eql evaluation/queryCompleted)) &rest params)
   "Handle SERVER's evaluation/queryCompleted request with PARAMS."
   ;;(message "%s %s" method params)
-  (cl-destructuring-bind ((&key resultType queryId evaluationTime message &allow-other-keys)) params
-    (message "[%s] resultType %s evaluationTime %s" method resultType evaluationTime)
+  (cl-destructuring-bind ((&key
+                           resultType
+                           queryId
+                           evaluationTime
+                           message
+                           &allow-other-keys))
+      params
+    (message "[%s] resultType %s evaluationTime %s"
+             method resultType evaluationTime)
     (cond ((eql resultType 0)
            '())
           ((eql resultType 1)
@@ -655,7 +662,13 @@ If optional MARKER, return a marker instead"
 
 (defun codeql--query-server2-handle-message (&rest params)
   "Handle SERVER's message from PARAMS."
-  (cl-destructuring-bind ((&key resultType queryId evaluationTime message &allow-other-keys)) params
+  (cl-destructuring-bind ((&key
+                           resultType
+                           queryId
+                           evaluationTime
+                           message
+                           &allow-other-keys))
+      params
     (cond ((eql resultType 0)
            '())
           ((eql resultType 1)
@@ -707,8 +720,8 @@ Provides backwards references into the AST buffer from the source file.")
   (setq codeql--ast-cache (make-hash-table :test #'equal))
   (message "Cleared refs/defs/ast caches."))
 
-(defvar codeql--active-source-roots-with-buffers nil
-  "A hash table of currently active archive source roots and their query buffers.")
+;; (defvar codeql--active-source-roots-with-buffers nil
+;;   "A hash table of currently active archive source roots and their query buffers.")
 
 (defvar codeql--active-datasets nil
   "A hash table of all registered databases across all sessions.")
@@ -750,10 +763,6 @@ Provides backwards references into the AST buffer from the source file.")
 (defun codeql--reset-database-state ()
   "Clear out all the buffer-local database state."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode))
-  (when codeql--database-source-archive-root
-    (codeql--database-unmount-source-archive-zip codeql--database-source-archive-root)
-    (remhash (codeql--tramp-wrap codeql--database-source-archive-root)
-             codeql--active-source-roots-with-buffers))
   (setq codeql--active-database nil)
   (setq codeql--active-database-language nil)
   (setq codeql--database-dataset-folder nil)
@@ -805,7 +814,10 @@ Provides backwards references into the AST buffer from the source file.")
 (defun codeql--shell-command-to-string (cmd &optional verbose keep-stdout)
   "A shell command to string that gives us explicit control over stdout and stderr."
   (when (or verbose codeql-verbose-commands)
-    (message "Running %s cmd: %s" (if (file-remote-p default-directory) "remote" "local") cmd))
+    (message "Running %s cmd: %s"
+             (if (file-remote-p default-directory)
+                 "remote" "local")
+             cmd))
   (condition-case nil
       (with-temp-buffer
         (let* ((stdout-buffer (generate-new-buffer (format "* stdout: %s *" cmd)))
@@ -834,7 +846,9 @@ Provides backwards references into the AST buffer from the source file.")
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (let* ((cmd (format "%s execute --help" (codeql--cli-buffer-local-as-string)))
          (help (codeql--shell-command-to-string cmd)))
-    (if (string-match-p "query-server2" help) "query-server2" "query-server")))
+    (if (string-match-p (regexp-quote "query-server2") help)
+        "query-server2"
+      "query-server")))
 
 (defun codeql--resolve-query-paths (query-path)
   "Resolve and set buffer-local library-path and dbscheme for QUERY-PATH.
@@ -982,19 +996,20 @@ side effects."
   (message "archive-root: %s" (codeql--file-truename codeql--database-source-archive-root))
   (message "trusted-root: %s" (codeql--file-truename trusted-root))
   (if (not (codeql--file-exists-p (codeql--file-truename codeql--database-source-archive-root)))
-      (when (eql (string-match (codeql--file-truename trusted-root)
-                               (codeql--file-truename codeql--database-source-archive-root)) 0)
-        (message "Source root verified to exist in trusted path ... extracting|mounting.")
+      (when (string-match-p (format "^%s" (regexp-quote (codeql--file-truename trusted-root)))
+                            (codeql--file-truename codeql--database-source-archive-root))
+        ;; XXX: should probably check for traversal here as well eh?
+        (message "Source root verified to exist in trusted path ... extracting.")
         (cond
-         ;; I like to use https://github.com/google/mount-zip so selfishly check for it here
-         ((executable-find "mount-zip" (file-remote-p default-directory))
-          (message "Mounting source archive with mount-zip.")
-          (when (codeql--shell-command-to-string
-                 (format "%s -o nospecials -o nosymlinks -o nohardlinks %s %s"
-                         (executable-find "mount-zip" (file-remote-p default-directory))
-                         (codeql--file-truename codeql--database-source-archive-zip)
-                         (codeql--file-truename codeql--database-source-archive-root)))
-            (message "Mounted source archive with mount-zip.")))
+         ;; ;; I like to use https://github.com/google/mount-zip so selfishly check for it here
+         ;; ((executable-find "mount-zip" (file-remote-p default-directory))
+         ;;  (message "Mounting source archive with mount-zip.")
+         ;;  (when (codeql--shell-command-to-string
+         ;;         (format "%s -o nospecials -o nosymlinks -o nohardlinks %s %s"
+         ;;                 (executable-find "mount-zip" (file-remote-p default-directory))
+         ;;                 (codeql--file-truename codeql--database-source-archive-zip)
+         ;;                 (codeql--file-truename codeql--database-source-archive-root)))
+         ;;    (message "Mounted source archive with mount-zip.")))
          ;; fall back to regular full extraction here
          ((executable-find "unzip" (file-remote-p default-directory))
           (message "Extracting source archive with unzip.")
@@ -1003,24 +1018,25 @@ side effects."
                          (executable-find "unzip" (file-remote-p default-directory))
                          (codeql--file-truename codeql--database-source-archive-zip)
                          (codeql--file-truename codeql--database-source-archive-root)))
-            (message "Extracted source archive with unzip.")))))
-    (message "Source archive already extracted|mounted.")
+            (message "Extracted source archive with unzip.")))
+         (t (error "Could not process source archive."))))
+    (message "Source archive already processed.")
     t))
 
-(defun codeql--database-unmount-source-archive-zip (source-zip-root)
-  "Unmount a src zip archive if it was mounted."
-  (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-  (cl-assert source-zip-root t)
-  (when-let ((true-root (codeql--file-truename source-zip-root))
-             (umount (executable-find "umount" (file-remote-p default-directory)))
-             (mountpoint (executable-find "mountpoint" (file-remote-p default-directory)))
-             (mount-zip (executable-find "mount-zip" (file-remote-p default-directory))))
-    (message "archive-root: %s" true-root)
-    ;; we only need to do this if mount-zip is available, since that's the only time src will be mounted
-    (when (and (codeql--file-exists-p true-root)
-               (codeql--shell-command-to-string (format "%s %s" mountpoint true-root))
-               (codeql--shell-command-to-string (format "%s %s" umount true-root)))
-      (message "Umounted %s" true-root))))
+;; (defun codeql--database-unmount-source-archive-zip (source-zip-root)
+;;   "Unmount a src zip archive if it was mounted."
+;;   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
+;;   (cl-assert source-zip-root t)
+;;   (when-let ((true-root (codeql--file-truename source-zip-root))
+;;              (umount (executable-find "umount" (file-remote-p default-directory)))
+;;              (mountpoint (executable-find "mountpoint" (file-remote-p default-directory)))
+;;              (mount-zip (executable-find "mount-zip" (file-remote-p default-directory))))
+;;     (message "archive-root: %s" true-root)
+;;     ;; we only need to do this if mount-zip is available, since that's the only time src will be mounted
+;;     (when (and (codeql--file-exists-p true-root)
+;;                (codeql--shell-command-to-string (format "%s %s" mountpoint true-root))
+;;                (codeql--shell-command-to-string (format "%s %s" umount true-root)))
+;;       (message "Umounted %s" true-root))))
 
 ;;; jsonrpc interactions with the buffer-local query server
 
@@ -1045,10 +1061,6 @@ side effects."
   ;; init the database history if need be
   (unless codeql--registered-database-history
     (setq codeql--registered-database-history (make-hash-table :test #'equal)))
-
-  ;; init active source roots map if need be
-  (unless codeql--active-source-roots-with-buffers
-    (setq codeql--active-source-roots-with-buffers (make-hash-table :test #'equal)))
 
   ;; resolve and set the dataset folder, we need this when running queries
   (let* ((database-info (codeql--database-info database-path))
@@ -1075,7 +1087,6 @@ side effects."
 
     (message "Registering: %s" database-dataset-folder)
 
-    ;; XXX: dedupe code when everything is working
     (cond
      ;; legacy query-server
      ((string= codeql-query-server "query-server")
@@ -1094,13 +1105,12 @@ side effects."
              (source-location-prefix source-location-prefix)
              (source-archive-root source-archive-root)
              (source-archive-zip source-archive-zip))
-         (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
+         (jsonrpc-lambda
+             (&key registeredDatabases &allow-other-keys)
            ;;(message "Success: %s" registeredDatabases)
            (with-current-buffer buffer
              ;; global addition can be asynchronous, so we do that on success only
              (codeql--active-datasets-add database-dataset-folder (current-buffer))
-             ;; associate the source root with the query buffer globally for xref support
-             (puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
              ;; save in database selection history
              (puthash database-path database-path codeql--registered-database-history)
              ;; these variables are buffer-local to ql-tree-sitter-mode
@@ -1119,6 +1129,7 @@ side effects."
          (message "Error %s: %s\n%s\n" code message data))
        ;; synchronize to only register when deregister has completed in global state
        :deferred :evaluation/registerDatabases))
+
      ;; query-server2
      ((string= codeql-query-server "query-server2")
       (jsonrpc-async-request
@@ -1136,15 +1147,14 @@ side effects."
              (source-location-prefix source-location-prefix)
              (source-archive-root source-archive-root)
              (source-archive-zip source-archive-zip))
-         (jsonrpc-lambda (&rest params)
+         (jsonrpc-lambda
+             (&rest params)
            (let ((errors (codeql--query-server2-handle-message params)))
              (when errors
                (error errors)))
            (with-current-buffer buffer
              ;; global addition can be asynchronous, so we do that on success only
              (codeql--active-datasets-add database-dataset-folder (current-buffer))
-             ;; associate the source root with the query buffer globally for xref support
-             (puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
              ;; save in database selection history
              (puthash database-path database-path codeql--registered-database-history)
              ;; these variables are buffer-local to ql-tree-sitter-mode
@@ -1182,17 +1192,17 @@ side effects."
         [(:dbDir ,database-dataset-folder :workingSet "default")])
        :progressId ,(codeql--query-server-next-progress-id))
      :success-fn
-     (let
-         ((buffer (current-buffer))
-          (database-dataset-folder database-dataset-folder))
-       (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
-         ;;(message "Success: %s" registeredDatabases)
-         (with-current-buffer buffer
-           (codeql--reset-database-state)
-           (message "Deregistered: %s" database-dataset-folder))))
+     (let ((buffer (current-buffer))
+           (database-dataset-folder database-dataset-folder))
+       (jsonrpc-lambda
+        (&key registeredDatabases &allow-other-keys)
+        ;;(message "Success: %s" registeredDatabases)
+        (with-current-buffer buffer
+          (codeql--reset-database-state)
+          (message "Deregistered: %s" database-dataset-folder))))
      :error-fn
      (jsonrpc-lambda (&key code message data &allow-other-keys)
-       (message "Error %s: %s\n%s\n" code message data))
+                     (message "Error %s: %s\n%s\n" code message data))
      :deferred :evaluation/deregisterDatabases))
 
    ;; query-server2
@@ -1204,17 +1214,19 @@ side effects."
        (:databases [,(codeql--file-truename database-path)])
        :progressId ,(codeql--query-server-next-progress-id))
      :success-fn
-     (let
-         ((buffer (current-buffer))
-          (database-dataset-folder database-dataset-folder))
-       (jsonrpc-lambda (&key registeredDatabases &allow-other-keys)
-         ;;(message "Success: %s" registeredDatabases)
-         (with-current-buffer buffer
-           (codeql--reset-database-state)
-           (message "Deregistered: %s" database-dataset-folder))))
+     (let ((buffer (current-buffer))
+           (database-dataset-folder database-dataset-folder))
+       (jsonrpc-lambda
+        (&rest params)
+        (let ((errors (codeql--query-server2-handle-message params)))
+          (when errors
+            (error errors)))
+        (with-current-buffer buffer
+          (codeql--reset-database-state)
+          (message "Deregistered: %s" database-dataset-folder))))
      :error-fn
      (jsonrpc-lambda (&key code message data &allow-other-keys)
-       (message "Error %s: %s\n%s\n" code message data))
+                     (message "Error %s: %s\n%s\n" code message data))
      :deferred :evaluation/deregisterDatabases))))
 
 (defun codeql-query-server-active-database ()
@@ -1233,11 +1245,12 @@ side effects."
   (let ((template "%%SRCROOT%%")
         (resolved-path uri))
     ;; do any source prefixing required based on global db info
-    (when (string-match template uri)
-      (setq resolved-path (replace-regexp-in-string
-                           template
-                           (or codeql--database-source-location-prefix "")
-                           uri)))
+    (when (string-match-p (regexp-quote template) uri)
+      (setq resolved-path
+            (replace-regexp-in-string
+             (regexp-quote template)
+             (or codeql--database-source-location-prefix "")
+             uri)))
     (let* ((url (url-generic-parse-url (url-unhex-string resolved-path)))
            (type (url-type url)))
       (if (and type (not (string= type "file")))
@@ -1245,8 +1258,7 @@ side effects."
       (url-filename url))))
 
 (cl-defstruct (codeql--result-node
-               (:constructor codeql--result-node-create)
-               (:copier nil))
+               (:constructor codeql--result-node-create) (:copier nil))
   (label             nil :read-only t)
   (mark              nil :read-only t)
   (filename          nil :read-only t)
@@ -1389,7 +1401,6 @@ Sets an optional HEADER."
                                            ;; columns comes direct from the json, no need to reverse
                                            columns) ",")))
                 (insert (concat table-header "\n"))))
-
             ;; add the main body, we pushed result tuples to head of list, so reverse for parsing
             (let* ((query-results (reverse query-results))
                    (table-body (mapconcat
@@ -1410,7 +1421,6 @@ Sets an optional HEADER."
               ;; this returns raw org data, does NOT render to a display buffer
               (insert table-body)
               (codeql--csv-to-org-table (buffer-string) (if columns t nil))))))
-
         ;; kind: problem and path-problem use the exact same SARIF renderer
         ((or 'problem 'path-problem)
          ;; generate an org tree off of a list structure
@@ -1455,11 +1465,10 @@ Sets an optional HEADER."
                                                         parent-buffer
                                                         nodes
                                                         (format "** Path #%s\n" i))))))))))
-
       ;; return final org data
       (buffer-string))))
 
-(defun codeql--org-render-sarif-results (org-data &optional footer marker)
+(defun codeql--org-render-sarif-results (org-data query-buffer &optional footer marker)
   "Render ORG-DATA including an optional FOOTER."
   ;; sarif results are org trees
   (let ((buffer
@@ -1474,11 +1483,12 @@ Sets an optional HEADER."
         (insert footer))
       (goto-char (point-min))
       (setq buffer-read-only t)
+      (setq codeql--org-query-buffer query-buffer)
       (save-excursion
         (switch-to-buffer-other-window buffer))
       (buffer-string))))
 
-(defun codeql--org-render-raw-query-results (org-data &optional footer marker)
+(defun codeql--org-render-raw-query-results (org-data query-buffer &optional footer marker)
   "Render ORG-DATA including an optional FOOTER."
   ;; raw results are org tables
   (let ((buffer
@@ -1496,6 +1506,7 @@ Sets an optional HEADER."
         (insert footer))
       (goto-char (point-min))
       (setq buffer-read-only t)
+      (setq codeql--org-query-buffer query-buffer)
       (save-excursion
         (switch-to-buffer-other-window buffer))
       (buffer-string))))
@@ -1531,9 +1542,12 @@ Group 8 matches the closing parenthesis.")
          (with-temp-buffer
            (insert message)
            (goto-char (point-min))
-           (cl-loop until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
+           (cl-loop until (not (re-search-forward
+                                codeql--markdown-regex-link-inline nil t))
                     collect
-                    (list (match-string 3) (string-to-number (match-string 6)))))))
+                    (list (match-string 3)
+                          (string-to-number
+                           (match-string 6)))))))
     links))
 
 (defun codeql--related-link-to-org-link (related-link related-locations)
@@ -1558,21 +1572,22 @@ Group 8 matches the closing parenthesis.")
           (insert message)
           (goto-char (point-min))
           (let ((last-point (point)))
-            (cl-loop until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
-                     do (let* ((prefix (buffer-substring-no-properties
-                                        last-point
-                                        (- (point) (length (match-string 0)))))
-                               (sarif-link-text (match-string 3))
-                               (sarif-link-id (string-to-number (match-string 6)))
-                               (org-link
-                                ;; we need to be in the query server context to resolve TRAMP links
-                                (with-current-buffer parent-buffer
-                                  (codeql--related-link-to-org-link
-                                   (list sarif-link-text sarif-link-id) related-locations))))
-                          (setq last-point (point))
-                          (save-excursion
-                            (with-current-buffer swap-buf
-                              (insert prefix (or org-link "XXXCOULDNOTRESOLVELINKXXX"))))))
+            (cl-loop
+             until (not (re-search-forward codeql--markdown-regex-link-inline nil t))
+             do (let* ((prefix (buffer-substring-no-properties
+                                last-point
+                                (- (point) (length (match-string 0)))))
+                       (sarif-link-text (match-string 3))
+                       (sarif-link-id (string-to-number (match-string 6)))
+                       (org-link
+                        ;; we need to be in the query server context to resolve TRAMP links
+                        (with-current-buffer parent-buffer
+                          (codeql--related-link-to-org-link
+                           (list sarif-link-text sarif-link-id) related-locations))))
+                  (setq last-point (point))
+                  (save-excursion
+                    (with-current-buffer swap-buf
+                      (insert prefix (or org-link "XXXCOULDNOTRESOLVELINKXXX"))))))
             ;; if there's any postfix left, grab that too
             (when (< (point) (point-max))
               (let ((postfix (buffer-substring-no-properties (point) (point-max))))
@@ -1674,18 +1689,7 @@ Group 8 matches the closing parenthesis.")
 
 (defvar codeql--templated-query-formats
   (list
-
-   ;; :c           "cpp/ql/src/%s.ql"
-   ;; :cpp         "cpp/ql/src/%s.ql"
-   ;; :java        "java/ql/src/%s.ql"
-   ;; :cs          "csharp/ql/src/%s.ql"
-   ;; :javascript  "javascript/ql/src/%s.ql"
-   ;; :python      "python/ql/src/%s.ql"
-   ;; :ql          "ql/ql/src/ide-contextual-queries/%s.ql"
-   ;; :ruby        "ruby/ql/lib/ide-contextual-queries/%s.ql"
-   ;; :go          "ql/lib/%s.ql"
-
-   ;; updated for ql-pack relative paths
+   ;; updated for library-path relative paths
    :c           "%s.ql"
    :cpp         "%s.ql"
    :java        "%s.ql"
@@ -1694,9 +1698,7 @@ Group 8 matches the closing parenthesis.")
    :python      "%s.ql"
    :ql          "ide-contextual-queries/%s.ql"
    :ruby        "ide-contextual-queries/%s.ql"
-   :go          "%s.ql"
-
-   )
+   :go          "%s.ql")
   "A format list for finding templated queries by name")
 
 (defun codeql--templated-query-path (language query-name)
@@ -1706,7 +1708,10 @@ Group 8 matches the closing parenthesis.")
 
 (defun codeql--archive-path-from-org-filename (filename)
   ;; do a dance to normalize back to the archive root relative path for this filename
-  (format "/%s" (cadr (split-string filename (format "%s/*" codeql--database-source-archive-root)))))
+  (format "/%s" (cadr
+                 (split-string
+                  filename
+                  (format "%s/*" codeql--database-source-archive-root)))))
 
 (defun codeql--run-templated-query (language query-name src-filename src-buffer)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
@@ -1715,8 +1720,7 @@ Group 8 matches the closing parenthesis.")
   (when-let ((query-path (codeql--templated-query-path language query-name)))
     (cl-loop for search-path in codeql--search-paths-buffer-local
              for full-path = (format "%s/%s" search-path query-path)
-             when (codeql--file-exists-p full-path)
-             do
+             when (codeql--file-exists-p full-path) do
              (message "Resolved templated query %s to %s" query-name full-path)
              (let ((template-values
                     (cond ((string= codeql-query-server "query-server")
@@ -1740,11 +1744,11 @@ Group 8 matches the closing parenthesis.")
              (cl-return)
              ;; if we did not return, that means we weren't able to find the thing.
              finally
-             (error "Did not find templated queries in search paths, did you not configure ~/.config/codeql/config?"))))
+             (error "Did not find templated queries in search paths."))))
 
 (defun codeql--database-src-path-p (path)
-  (let ((prefix (format "^%s/*" codeql--database-source-archive-root)))
-    (when (string-match prefix (codeql--tramp-unwrap path))
+  (let ((prefix (format "^%s/*" (regexp-quote codeql--database-source-archive-root))))
+    (when (string-match-p prefix (codeql--tramp-unwrap path))
       t)))
 
 ;; mutual highlighting at point for src/ast buffers
@@ -1774,8 +1778,16 @@ Group 8 matches the closing parenthesis.")
                  for src-start-column = (aref ast-def-seq 2)
                  for src-end-column = (aref ast-def-seq 3)
                  for ast-line = (aref ast-def-seq 4)
-                 for lsp-start-point = (codeql--eglot--lsp-position-to-point `(:line ,(1- src-start-line) :character ,(1- src-start-column)))
-                 for lsp-end-point = (codeql--eglot--lsp-position-to-point `(:line ,(1- src-end-line) :character ,(1- src-end-column)))
+                 for lsp-start-point =
+                 (codeql--eglot--lsp-position-to-point
+                  `(;; align
+                    :line ,(1- src-start-line)
+                    :character ,(1- src-start-column)))
+                 for lsp-end-point =
+                 (codeql--eglot--lsp-position-to-point
+                  `(;; align
+                    :line ,(1- src-end-line)
+                    :character ,(1- src-end-column)))
                  collect
                  (vector ast-line lsp-start-point lsp-end-point)))
   (message "AST lookup cache complete ... navigate away.")
@@ -1913,7 +1925,8 @@ Group 8 matches the closing parenthesis.")
     ;; source archive files are for browsing only!
     (unless buffer-read-only
       (setq buffer-read-only t))
-    (message "Activated CodeQL source archive xref bindings in %s" (file-name-nondirectory (buffer-file-name)))
+    (message "Activated CodeQL source archive xref bindings in %s"
+             (file-name-nondirectory (buffer-file-name)))
     (setq codeql--xref-has-bindings t)))
 
 (defun codeql-xref-backend ()
@@ -1930,31 +1943,26 @@ the local buffer when appropriate, i.e. when the buffer is a file inside
 a codeql database source archive."
   (interactive)
   (when codeql-enable-xrefs
-    (unless (and
-             (buffer-file-name)
-             (file-remote-p (buffer-file-name))
-             (not codeql-enable-remote-xrefs))
+    (unless (and (buffer-file-name)
+                 (file-remote-p (buffer-file-name))
+                 (not codeql-enable-remote-xrefs))
       (if (and (gethash (buffer-file-name) codeql--references-cache)
                (gethash (buffer-file-name) codeql--definitions-cache))
           (progn
             (codeql--set-local-xref-bindings)
             'codeql)
         ;; see if this file SHOULD have codeql refs and defs and the local bindings
-        ;; XXX: this is not very performant, make this a faster lookup
-        (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-                 with src-filename = (buffer-file-name)
-                 with src-buffer = (current-buffer)
-                 when (string-match source-root src-filename)
-                 do
-                 ;; hail to the guardians of the watch towers of the east
-                 (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory src-filename))
-                 (with-current-buffer (gethash source-root codeql--active-source-roots-with-buffers)
-                   (let ((language (intern (format ":%s" codeql--active-database-language))))
-                     (codeql--run-templated-query language "localDefinitions" src-filename src-buffer)
-                     (codeql--run-templated-query language "localReferences" src-filename src-buffer)))
-                 ;; we want our bindings available
-                 (codeql--set-local-xref-bindings)
-                 (cl-return 'codeql))))))
+        (when (buffer-live-p codeql--org-query-buffer)
+          (let ((src-filename (buffer-file-name))
+                (src-buffer (current-buffer)))
+            (with-current-buffer codeql--org-query-buffer
+              (let ((language (intern (format ":%s" codeql--active-database-language))))
+                (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory src-filename))
+                (codeql--run-templated-query language "localDefinitions" src-filename src-buffer)
+                (codeql--run-templated-query language "localReferences" src-filename src-buffer))))
+          ;; we want our bindings available
+          (codeql--set-local-xref-bindings)
+          'codeql)))))
 
 (cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
   "Return the thing at point."
@@ -2009,7 +2017,9 @@ a codeql database source archive."
                       (<= point-column src-end-column)))
                ;; if point is at a ref that we know about, collect the def
                collect
-               (xref-make dst-desc (xref-make-file-location (codeql--tramp-wrap filename) dst-line (1- dst-column)))))))
+               (xref-make dst-desc (xref-make-file-location
+                                    (codeql--tramp-wrap filename)
+                                    dst-line (1- dst-column)))))))
 
 (cl-defmethod xref-backend-references ((_backend (eql codeql)) _symbol)
   "Get known references for location at point."
@@ -2036,9 +2046,9 @@ a codeql database source archive."
                       (<= point-column dst-end-column)))
                ;; if point is at a def that we know about, collect the ref
                collect
-               (xref-make
-                src-desc
-                (xref-make-file-location (codeql--tramp-wrap filename) src-line (1- src-column)))))))
+               (xref-make src-desc (xref-make-file-location
+                                    (codeql--tramp-wrap filename)
+                                    src-line (1- src-column)))))))
 
 ;; XXX: TODO
 (cl-defmethod xref-backend-apropos ((_backend (eql codeql)) _symbol)
@@ -2063,18 +2073,48 @@ Our implementation simply returns the thing at point as a candidate."
 (add-to-list 'xref-backend-functions #'codeql-xref-backend)
 
 ;; custom org link so we can do voodoo when C-c C-o on a codeql: link
+(defvar-local codeql--org-query-buffer nil
+  "Share a buffer local copy of the query buffer in results buffers.")
+
+(defun codeql--find-file-other-window (filename &optional wildcards)
+  (interactive
+   (find-file-read-args "Find file in other window: "
+                        (confirm-nonexistent-file-or-buffer)))
+  ;; disable eglot-ensure
+  (cl-letf (((symbol-function #'eglot-ensure)
+             (lambda ()
+               (message "Disabled eglot for codeql org link."))))
+    (let ((value (find-file-noselect filename nil nil wildcards)))
+      (if (listp value)
+	  (progn
+	    (setq value (nreverse value))
+	    (switch-to-buffer-other-window (car value))
+            (mapc 'switch-to-buffer (cdr value))
+	    value)
+        (switch-to-buffer-other-window value)))))
 
 (defun codeql--org-open-file-link (filename)
   (cl-multiple-value-bind (filename line-column) (split-string filename "::")
     (cl-multiple-value-bind (line column) (split-string line-column ":")
-      (when-let ((src-buffer (find-file-other-window filename)))
+
+      ;; XXX: hrmmm ... we probably want to force unique file visits
+      ;; XXX: since we don't want to use a cross-query state when there
+      ;; XXX: concurrent query buffers operating on the same database
+      ;; XXX: although this re-associates to the correct query buffer
+      ;; XXX: pending which results are being navigated, so this is
+      ;; XXX: probably ok in practice
+
+      (when-let ((query-buffer codeql--org-query-buffer)
+                 (src-buffer (codeql--find-file-other-window filename)))
         (with-current-buffer src-buffer
+          (setq codeql--org-query-buffer query-buffer)
           (widen)
           ;; codeql is 1 based, eglot calcs are 0 based, adjust accordingly
           (when (and column line)
             (goto-char (codeql--eglot--lsp-position-to-point
-                        `(:line ,(1- (string-to-number line))
-                                :character ,(1- (string-to-number column))))))
+                        `(;; align
+                          :line ,(1- (string-to-number line))
+                          :character ,(1- (string-to-number column))))))
           ;; enable our xref backend, this kicks in templated queries for refs and defs
           (codeql-xref-backend))))))
 
@@ -2090,9 +2130,8 @@ Our implementation simply returns the thing at point as a candidate."
 
 ;; AST viewer
 
-(cl-defstruct (codeql--ast-item
-               (:constructor codeql--ast-item-create)
-               (:copier nil))
+(cl-defstruct
+    (codeql--ast-item (:constructor codeql--ast-item-create) (:copier nil))
   (id                nil :read-only t)
   (parent            nil :read-only nil)
   (label             nil :read-only t)
@@ -2117,12 +2156,10 @@ Our implementation simply returns the thing at point as a candidate."
         (ast-order (make-hash-table :test #'equal))
         (roots [])
         (edge-labels (make-hash-table :test #'equal))
-
         (node-tuples (json-pointer-get json "/nodes"))
         (edge-tuples (json-pointer-get json "/edges"))
         (graph-props (json-pointer-get json "graphProperties")))
     (when (codeql--valid-graph-p graph-props)
-
       ;; round 1
       (cl-loop for tuple across (json-pointer-get edge-tuples "/tuples")
                for source = (seq-elt tuple 0)
@@ -2130,8 +2167,7 @@ Our implementation simply returns the thing at point as a candidate."
                for tuple-type = (seq-elt tuple 2)
                for value = (seq-elt tuple 3)
                for source-id = (json-pointer-get source "/id")
-               for target-id = (json-pointer-get target "/id")
-               do
+               for target-id = (json-pointer-get target "/id") do
                (cond ((string= tuple-type "semmle.order")
                       (puthash target-id (string-to-number value) ast-order))
                      ((string= tuple-type "semmle.label")
@@ -2140,9 +2176,7 @@ Our implementation simply returns the thing at point as a candidate."
                         (puthash source-id (vconcat children `[,target-id]) parent-to-children))
                       (condition-case nil
                           (cl-parse-integer value)
-                        (error
-                         (puthash target-id value edge-labels))))))
-
+                        (error (puthash target-id value edge-labels))))))
       ;; round 2
       (cl-loop for tuple across (json-pointer-get node-tuples "/tuples")
                for entity = (seq-elt tuple 0)
@@ -2154,19 +2188,16 @@ Our implementation simply returns the thing at point as a candidate."
                ;; XXX: double check value isn't "" here
                for node-label = (or value entity-label)
                for edge-label = (gethash entity-id edge-labels)
-               for label = (if edge-label (format "%s: %s" edge-label node-label) node-label)
-               do
+               for label = (if edge-label (format "%s: %s" edge-label node-label) node-label) do
                (cond ((string= tuple-type "semmle.order")
                       (puthash entity-id (string-to-number value) ast-order))
                      ((string= tuple-type "semmle.label")
-
                       ;; create an AST item node
                       (let ((item (codeql--ast-item-create
                                    :id entity-id
                                    :label label
                                    :location entity-url
                                    :children [])))
-
                         ;; tag on a location result node for our org renderer to use
                         (when entity-url
                           (setf (codeql--ast-item-result-node item)
@@ -2178,25 +2209,20 @@ Our implementation simply returns the thing at point as a candidate."
                                  :column (json-pointer-get entity-url "/startColumn")
                                  :visitable t
                                  :url entity-url)))
-
                         (puthash entity-id item id-to-item)
-
                         ;; check if this item has a known parent
                         (when-let ((parent (gethash (gethash entity-id child-to-parent) id-to-item)))
                           (setf (codeql--ast-item-parent item) parent)
                           (setf (codeql--ast-item-children parent)
                                 (vconcat (codeql--ast-item-children parent) `[,item])))
-
                         ;; check if this item has known children, children is a vector
                         (when-let ((children (gethash entity-id parent-to-children)))
                           (cl-loop for child-id across children
                                    for child = (gethash child-id id-to-item)
-                                   when child
-                                   do
+                                   when child do
                                    (setf (codeql--ast-item-parent child) item)
                                    (setf (codeql--ast-item-children item)
                                          (vconcat (codeql--ast-item-children item) `[,child]))))))))
-
       ;; round 3: sort the tree
       (maphash
        (lambda (_ item)
@@ -2206,30 +2232,19 @@ Our implementation simply returns the thing at point as a candidate."
          (unless (or (codeql--ast-item-parent item))
            (setq roots (vconcat roots `[,item]))))
        id-to-item)
-
       ;; round 4: ding ding ding,  order and render
       (let ((sorted-tree (codeql--sort-tree roots)))
         (message "Tree is sorted (%d roots) ... rendering." (length sorted-tree))
         ;; render with buffer context ...
-        (cl-loop for active-source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-                 with filename = (codeql--tramp-wrap (format "%s%s" src-root src-filename))
-                 when (string-match active-source-root filename)
-                 do
-                 (message "Active buffer context available to render AST for %s" filename)
-                 ;; hail to the guardians of the watch towers of the north.
-                 (let ((buffer-context (gethash active-source-root codeql--active-source-roots-with-buffers)))
-                   (codeql--ast-to-org sorted-tree src-filename src-buffer buffer-context))
-                 ;; donezo.
-                 (cl-return)
-                 ;; fall back to plaintext rendering
-                 finally
-                 (message "No active buffer context available to render AST with, going to plaintext.")
-                 (codeql--ast-to-org sorted-tree src-filename src-buffer))))))
+        (with-current-buffer src-buffer
+          (if (buffer-live-p codeql--org-query-buffer)
+              (codeql--ast-to-org sorted-tree src-filename src-buffer codeql--org-query-buffer)
+            (message "No active buffer context available to render AST with, going to plaintext.")
+            (codeql--ast-to-org sorted-tree src-filename src-buffer)))))))
 
 (defun codeql--ast-to-org (sorted-tree src-filename src-buffer &optional buffer-context)
   ;; src-filename is (buffer-filename) for the src buffer ... XXX: check with TRAMP
   (let ((ast-buffer (get-buffer-create (format "* AST viewer: %s *" src-filename))))
-    ;;(message "XXX: %s -> %s" src-filename src-buffer)
     (with-current-buffer ast-buffer
       ;; link the src buffer and the ast buffer in mutual harmony if it's still around
       (when (buffer-live-p src-buffer)
@@ -2252,70 +2267,68 @@ Our implementation simply returns the thing at point as a candidate."
 (defun codeql--render-node (node level &optional buffer-context)
   (insert
    (concat
-    (format "%s %s" level
-            (if-let* ((result-node
-                       ;; if these things hold, we want to resolve the org link
-                       (and buffer-context
-                            (codeql--ast-item-result-node node)))
-                      ;; line == 0 means no location available
-                      (line (and (> (codeql--result-node-line result-node) 0)
-                                 (codeql--result-node-line result-node))))
-                (progn
-                  ;; init ast reference cache if need be
-                  (let* ((src-filename (codeql--result-node-filename result-node))
-                         ;; XXX: double check under TRAMP
-                         (full-src-path
-                          (with-current-buffer buffer-context
-                            (format (codeql--tramp-wrap
-                                     (format "%s%s"
-                                             codeql--database-source-archive-root
-                                             src-filename))))))
-                    (unless (gethash full-src-path codeql--ast-backwards-definitions)
-                      (puthash full-src-path [] codeql--ast-backwards-definitions)))
-                  ;; there's backwards messages in this stuff
-                  (let* ((src-filename (codeql--result-node-filename result-node))
-                         (full-src-path
-                          (with-current-buffer buffer-context
-                            (format (codeql--tramp-wrap
-                                     (format "%s%s"
-                                             codeql--database-source-archive-root
-                                             src-filename)))))
-                         (ast-line (line-number-at-pos))
-                         (ast-lookup-vector (gethash full-src-path codeql--ast-backwards-definitions))
-                         (entity-url (codeql--result-node-url result-node))
-                         (src-start-line (json-pointer-get entity-url "/startLine"))
-                         (src-end-line (or (json-pointer-get entity-url "/endLine") src-start-line))
-                         (src-start-column (or (json-pointer-get entity-url "/startColumn") 1))
-                         (src-end-column (json-pointer-get entity-url "/endColumn")))
-                    ;; make all the info we need to build an AST definition available from our xref backend
-                    (puthash full-src-path
-                             (vconcat `[,(vector
-                                          src-start-line
-                                          src-end-line
-                                          src-start-column
-                                          src-end-column
-                                          ast-line)]
-                                      ast-lookup-vector)
-                             codeql--ast-backwards-definitions))
-
-                  ;; go into the active query buffer context and resolve from database
-                  (save-excursion
-                    (with-current-buffer buffer-context
-                      (format "%s %s%s"
-                              (codeql--ast-item-label node)
-                              (codeql--result-node-to-org result-node "⧉")
-                              ;; only add Line stamp to roots
-                              (if (codeql--ast-item-parent node) "" (format " Line %s" line))))))
-              ;; if not, just return a plain text heading
-              (codeql--ast-item-label node))) "\n"))
+    (format
+     "%s %s" level
+     (if-let* ((result-node
+                ;; if these things hold, we want to resolve the org link
+                (and buffer-context
+                     (codeql--ast-item-result-node node)))
+               ;; line == 0 means no location available
+               (line (and (> (codeql--result-node-line result-node) 0)
+                          (codeql--result-node-line result-node))))
+         (progn
+           ;; init ast reference cache if need be
+           (let* ((src-filename (codeql--result-node-filename result-node))
+                  ;; XXX: double check under TRAMP
+                  (full-src-path
+                   (with-current-buffer buffer-context
+                     (format (codeql--tramp-wrap
+                              (format "%s%s"
+                                      codeql--database-source-archive-root
+                                      src-filename))))))
+             (unless (gethash full-src-path codeql--ast-backwards-definitions)
+               (puthash full-src-path [] codeql--ast-backwards-definitions)))
+           ;; there's backwards messages in this stuff
+           (let* ((src-filename (codeql--result-node-filename result-node))
+                  (full-src-path
+                   (with-current-buffer buffer-context
+                     (format (codeql--tramp-wrap
+                              (format "%s%s"
+                                      codeql--database-source-archive-root
+                                      src-filename)))))
+                  (ast-line (line-number-at-pos))
+                  (ast-lookup-vector (gethash full-src-path codeql--ast-backwards-definitions))
+                  (entity-url (codeql--result-node-url result-node))
+                  (src-start-line (json-pointer-get entity-url "/startLine"))
+                  (src-end-line (or (json-pointer-get entity-url "/endLine") src-start-line))
+                  (src-start-column (or (json-pointer-get entity-url "/startColumn") 1))
+                  (src-end-column (json-pointer-get entity-url "/endColumn")))
+             ;; make all the info we need to build an AST definition available from our xref backend
+             (puthash full-src-path
+                      (vconcat `[,(vector
+                                   src-start-line
+                                   src-end-line
+                                   src-start-column
+                                   src-end-column
+                                   ast-line)]
+                               ast-lookup-vector)
+                      codeql--ast-backwards-definitions))
+           ;; go into the active query buffer context and resolve from database
+           (save-excursion
+             (with-current-buffer buffer-context
+               (format "%s %s%s"
+                       (codeql--ast-item-label node)
+                       (codeql--result-node-to-org result-node "⧉")
+                       ;; only add Line stamp to roots
+                       (if (codeql--ast-item-parent node) "" (format " Line %s" line))))))
+       ;; if not, just return a plain text heading
+       (codeql--ast-item-label node))) "\n"))
   ;; hail to the guardians of the watch towers of the south.
-  (cl-loop for node across (codeql--ast-item-children node)
-           do
+  (cl-loop for node across (codeql--ast-item-children node) do
            (codeql--render-node node (concat level "*") buffer-context)))
 
 (defun codeql--render-tree (tree &optional buffer-context)
-  (cl-loop for root across tree
-           do
+  (cl-loop for root across tree do
            (codeql--render-node root "*" buffer-context)))
 
 (defun codeql--sort-node (node)
@@ -2323,7 +2336,8 @@ Our implementation simply returns the thing at point as a candidate."
   (setf (codeql--ast-item-children node)
         (sort (codeql--ast-item-children node)
               (lambda (left right)
-                (< (codeql--ast-item-order left) (codeql--ast-item-order right)))))
+                (< (codeql--ast-item-order left)
+                   (codeql--ast-item-order right)))))
   ;; sort any children of this node's children
   (when (> (length (codeql--ast-item-children node)) 0)
     (seq-map #'codeql--sort-node (codeql--ast-item-children node))))
@@ -2333,7 +2347,8 @@ Our implementation simply returns the thing at point as a candidate."
   (seq-map #'codeql--sort-node tree)
   ;; sort all the roots of the tree and return that vector
   (sort tree (lambda (left right)
-               (< (codeql--ast-item-order left) (codeql--ast-item-order right)))))
+               (< (codeql--ast-item-order left)
+                  (codeql--ast-item-order right)))))
 
 (defun codeql-view-ast ()
   "Display the AST for the current source archive file."
@@ -2343,22 +2358,14 @@ Our implementation simply returns the thing at point as a candidate."
         ;; render the AST from cache
         (codeql--render-ast json src-root (buffer-file-name) (current-buffer))
       ;; need to build an AST
-      (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-               with src-filename = (buffer-file-name)
-               with src-buffer = (current-buffer)
-               when (string-match source-root src-filename)
-               do
-               (message "Cooking up AST for %s, please hold." (file-name-nondirectory src-filename))
-               (let ((query-buffer
-                      (gethash source-root codeql--active-source-roots-with-buffers)))
-                 (with-current-buffer query-buffer
-                   (let ((language (intern (format ":%s" codeql--active-database-language))))
-                     (codeql--run-templated-query language "printAst" src-filename src-buffer))))
-               ;; exit loop on success
-               (cl-return)
-               ;; if we reach here, we did not find an active database query server to use
-               finally
-               (message "Did not recognize this file as being part of an active codeql database.")))))
+      (if (buffer-live-p codeql--org-query-buffer)
+          (let ((src-filename (buffer-file-name))
+                (src-buffer (current-buffer)))
+            (with-current-buffer codeql--org-query-buffer
+              (message "Cooking up AST for %s, please hold." (file-name-nondirectory src-filename))
+              (let ((language (intern (format ":%s" codeql--active-database-language))))
+                (codeql--run-templated-query language "printAst" src-filename src-buffer))))
+        (message "Did not recognize this file as being part of an active codeql database.")))))
 
 (defun codeql--process-ast (json src-filename src-root src-buffer)
   ;; only allow this to be called as part of a templated flow
@@ -2366,20 +2373,28 @@ Our implementation simply returns the thing at point as a candidate."
   (codeql--render-ast json src-root src-filename src-buffer))
 
 (defun codeql--templated-query-p (query-path)
-  (or (string-match "/localDefinitions.ql$" query-path)
-      (string-match "/localReferences.ql$" query-path)
-      (string-match "/printAst.ql$" query-path)))
+  (or (string-match-p "/localDefinitions\\.ql$" query-path)
+      (string-match-p "/localReferences\\.ql$" query-path)
+      (string-match-p "/printAst\\.ql$" query-path)))
 
 ;; abandon hope, all ye who enter here ...
-(defun codeql-load-bqrs (bqrs-path query-path db-path query-name query-kind query-id &optional src-filename src-root src-buffer)
+(defun codeql-load-bqrs (bqrs-path
+                         query-path
+                         db-path
+                         query-name
+                         query-kind
+                         query-id
+                         query-buffer
+                         &optional
+                         src-filename
+                         src-root
+                         src-buffer)
   "Parse the results at BQRS-PATH and render them accordingly to the user."
-
   (message "Loading bqrs from %s (name: %s kind: %s id: %s)"
            bqrs-path
            (or query-name "no-meta")
            (or query-kind "no-meta")
            (or query-id "no-meta"))
-
   (when-let ((bqrs-info (codeql--bqrs-info bqrs-path)))
     (let ((_result-sets (json-pointer-get bqrs-info "/result-sets"))
           (compatible-query-kinds (json-pointer-get bqrs-info "compatible-query-kinds"))
@@ -2388,31 +2403,32 @@ Our implementation simply returns the thing at point as a candidate."
             ;; include query meta if we have some
             (if (and query-name query-kind query-id)
                 (format
-                 (mapconcat #'identity '("#+QUERY_NAME: %s"
-                                         "#+QUERY_KIND: %s"
-                                         "#+QUERY_ID: %s" "") "\n")
+                 (mapconcat
+                  #'identity
+                  '("#+QUERY_NAME: %s"
+                    "#+QUERY_KIND: %s"
+                    "#+QUERY_ID: %s" "") "\n")
                  query-name
                  query-kind
                  query-id)
               "")
             ;; info we always want
             (format
-             (mapconcat #'identity '("#+QUERY_TIME: %s"
-                                     "#+BQRS_PATH: %s"
-                                     "#+QUERY_PATH: %s"
-                                     "#+DB_PATH: %s") "\n")
+             (mapconcat
+              #'identity
+              '("#+QUERY_TIME: %s"
+                "#+BQRS_PATH: %s"
+                "#+QUERY_PATH: %s"
+                "#+DB_PATH: %s") "\n")
              (current-time-string)
              bqrs-path
              query-path
              db-path) "\n")))
       ;; parse results according to the query meta data
       (cond
-
        ;; AST parsing
        ;; process AST's, definitions, and references
-
        ((codeql--templated-query-p query-path)
-
         ;; don't let these be entered from query history
         (if (and src-filename src-root)
             (let* ((json (json-parse-string
@@ -2420,14 +2436,13 @@ Our implementation simply returns the thing at point as a candidate."
                           ;; json-pointer-get wants list based json
                           :object-type 'alist)))
               (when json
-                (cond ((string-match "/localDefinitions.ql$" query-path)
+                (cond ((string-match-p "/localDefinitions\\.ql$" query-path)
                        (codeql--process-defs json src-filename src-root src-buffer))
-                      ((string-match "/localReferences.ql$" query-path)
+                      ((string-match-p "/localReferences\\.ql$" query-path)
                        (codeql--process-refs json src-filename src-root src-buffer))
-                      ((string-match "/printAst.ql$" query-path)
+                      ((string-match-p "/printAst\\.ql$" query-path)
                        (codeql--process-ast json src-filename src-root src-buffer)))))
           (message "Can't process templated query without src-filename and src-root.")))
-
        ;; SARIF parsing
        ;;
        ;; https://codeql.github.com/docs/codeql-cli/sarif-output/
@@ -2451,7 +2466,6 @@ Our implementation simply returns the thing at point as a candidate."
        ;; * Issue: Location node
        ;; ** Related Locations
        ;; *** Location node
-
        ((or
          ;; path-problem
          (and (seq-contains-p compatible-query-kinds "PathProblem")
@@ -2461,7 +2475,6 @@ Our implementation simply returns the thing at point as a candidate."
          (and (seq-contains-p compatible-query-kinds "Problem")
               (string= query-kind "problem")
               query-id))
-
         (when-let ((json (json-parse-string (codeql--bqrs-to-sarif bqrs-path query-id query-kind)
                                             :object-type 'alist)))
           ;; render any available runs
@@ -2505,12 +2518,13 @@ Our implementation simply returns the thing at point as a candidate."
                (with-temp-buffer
                  (cl-loop for org-data in org-results do (insert org-data))
                  (let ((rendered
-                        (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
+                        (codeql--org-render-sarif-results
+                         (buffer-string) query-buffer
+                         footer (file-name-nondirectory query-path))))
                    ;; save off the fully rendered version for speedy re-loads
                    (with-temp-file (format "%s.org" bqrs-path)
                      (insert rendered))))
              (message "No results found.")))))
-
        ;; fall through to raw results parsing
        (t
         ;; raw results ... use an alist so we can use json-pointer-get
@@ -2535,36 +2549,34 @@ Our implementation simply returns the thing at point as a candidate."
                 ;; tuples are array of tuple, tuple are array of element
                 (cl-loop for tuple across tuples do
                          (let ((row-data nil))
-                           (cl-loop
-                            for element across tuple
-                            do (cond
-                                ;; node with location info
-                                ((and (listp element)
-                                      (json-pointer-get element "/url"))
-                                 (let ((node (codeql--result-node-create
-                                              :label (json-pointer-get element "/label")
-                                              :mark "→"
-                                              :filename (codeql--uri-to-filename
-                                                         (json-pointer-get element "/url/uri"))
-                                              :line (json-pointer-get element "/url/startLine")
-                                              :column (json-pointer-get element "/url/startColumn")
-                                              :visitable t
-                                              :url (json-pointer-get element "/url"))))
-                                   (cl-pushnew node row-data)))
-                                ;; node with no location info, but with a label
-                                ((and (listp element)
-                                      (json-pointer-get element "/label"))
-                                 (let ((node (codeql--result-node-create
-                                              :label (json-pointer-get element "/label")
-                                              :mark "≔")))
-                                   (cl-pushnew node row-data)))
-
-                                ;; everything else is a literal node
-                                (t
-                                 (let ((node (codeql--result-node-create
-                                              :label element
-                                              :mark "≔")))
-                                   (cl-pushnew node row-data)))))
+                           (cl-loop for element across tuple do
+                                    (cond
+                                     ;; node with location info
+                                     ((and (listp element)
+                                           (json-pointer-get element "/url"))
+                                      (let ((node (codeql--result-node-create
+                                                   :label (json-pointer-get element "/label")
+                                                   :mark "→"
+                                                   :filename (codeql--uri-to-filename
+                                                              (json-pointer-get element "/url/uri"))
+                                                   :line (json-pointer-get element "/url/startLine")
+                                                   :column (json-pointer-get element "/url/startColumn")
+                                                   :visitable t
+                                                   :url (json-pointer-get element "/url"))))
+                                        (cl-pushnew node row-data)))
+                                     ;; node with no location info, but with a label
+                                     ((and (listp element)
+                                           (json-pointer-get element "/label"))
+                                      (let ((node (codeql--result-node-create
+                                                   :label (json-pointer-get element "/label")
+                                                   :mark "≔")))
+                                        (cl-pushnew node row-data)))
+                                     ;; everything else is a literal node
+                                     (t
+                                      (let ((node (codeql--result-node-create
+                                                   :label element
+                                                   :mark "≔")))
+                                        (cl-pushnew node row-data)))))
                            ;; represent each tuple as a row of node columns
                            (cl-pushnew row-data codeql--query-results))))
             (message "No results in bqrs."))
@@ -2574,9 +2586,12 @@ Our implementation simply returns the thing at point as a candidate."
                    (codeql--query-results-to-org
                     codeql--query-results 'raw columns)))
               (when org-data
-                (let ((rendered (codeql--org-render-raw-query-results org-data footer (file-name-nondirectory query-path))))
-                  (with-temp-file (format "%s.org" bqrs-path) (insert rendered))))))))))))
-
+                (let ((rendered
+                       (codeql--org-render-raw-query-results
+                        org-data query-buffer footer
+                        (file-name-nondirectory query-path))))
+                  (with-temp-file (format "%s.org" bqrs-path)
+                    (insert rendered))))))))))))
 
 ;; request cancellation control
 
@@ -2617,10 +2632,14 @@ Our implementation simply returns the thing at point as a candidate."
 (cl-defun codeql--jsonrpc-async-request (connection
                                          method
                                          params
-                                         &rest args
-                                         &key _success-fn _error-fn
+                                         &rest
+                                         args
+                                         &key
+                                         _success-fn
+                                         _error-fn
                                          _timeout-fn
-                                         _timeout _deferred)
+                                         _timeout
+                                         _deferred)
   ;; we need to get at the request id, so we use our own wrapper
   (apply #'jsonrpc--async-request-1 connection method params args))
 
@@ -2632,30 +2651,33 @@ Our implementation simply returns the thing at point as a candidate."
                                          library-path
                                          db-path
                                          quick-eval
-                                         &optional template-values src-filename src-buffer)
+                                         &optional
+                                         template-values
+                                         src-filename
+                                         src-buffer)
   "Request a query evaluation from the query server."
   (with-current-buffer buffer-context
-
     (cond
      ;; legacy query-server
      ((string= codeql-query-server "query-server")
       (let ((run-query-params
              `(:body
                (:db
-                (:dbDir ,codeql--database-dataset-folder
-                        :workingSet "default")
+                (;; align
+                 :dbDir ,codeql--database-dataset-folder
+                 :workingSet "default")
                 :evaluateId ,(codeql--query-server-next-evaluate-id)
                 :queries
-                (:resultsPath ,(codeql--tramp-unwrap bqrs-path)
-                              :qlo ,(format "file:%s" (codeql--tramp-unwrap qlo-path))
-                              :allowUnknownTemplates t
-                              :templateValues ,template-values
-                              :id 0
-                              :timeoutSecs 0)
+                (;; align
+                 :resultsPath ,(codeql--tramp-unwrap bqrs-path)
+                 :qlo ,(format "file:%s" (codeql--tramp-unwrap qlo-path))
+                 :allowUnknownTemplates t
+                 :templateValues ,template-values
+                 :id 0
+                 :timeoutSecs 0)
                 :stopOnError :json-false
                 :useSequenceHint :json-false)
                :progressId ,(codeql--query-server-next-progress-id))))
-
         (message "Running query ...")
         (cl-multiple-value-bind (id timer)
             (codeql--jsonrpc-async-request
@@ -2671,7 +2693,8 @@ Our implementation simply returns the thing at point as a candidate."
                    (quick-eval quick-eval)
                    (src-filename src-filename)
                    (src-root codeql--database-source-archive-root))
-               (jsonrpc-lambda (&rest _)
+               (jsonrpc-lambda
+                   (&rest _)
                  (with-current-buffer buffer-context
                    (codeql--query-server-jsonrpc-unregister-request))
                  (message "Query run completed, checking results.")
@@ -2693,14 +2716,15 @@ Our implementation simply returns the thing at point as a candidate."
                                           (file-name-nondirectory query-path)
                                           (if quick-eval "quick-eval" "full-query")
                                           (codeql-query-server-active-database))
-                                  `(:quick-eval ,quick-eval
-                                                :query-path ,query-path
-                                                :bqrs-path ,bqrs-path
-                                                :db-path ,db-path
-                                                :timestamp ,timestamp
-                                                :name ,name
-                                                :kind ,kind
-                                                :id ,id)
+                                  `(;; align
+                                    :quick-eval ,quick-eval
+                                    :query-path ,query-path
+                                    :bqrs-path ,bqrs-path
+                                    :db-path ,db-path
+                                    :timestamp ,timestamp
+                                    :name ,name
+                                    :kind ,kind
+                                    :id ,id)
                                   codeql--completed-query-history)))
                              ;; display results
                              (codeql-load-bqrs
@@ -2710,20 +2734,20 @@ Our implementation simply returns the thing at point as a candidate."
                               name
                               kind
                               id
+                              buffer-context
                               src-filename
                               codeql--database-source-archive-root
                               src-buffer))))
                      (message "No query results in %s!" bqrs-path)))))
              :error-fn
-             (let ((bufer-context buffer-context))
+             (let ((buffer-context buffer-context))
                (jsonrpc-lambda (&key code message data &allow-other-keys)
-                 (with-current-buffer
-                     (codeql--query-server-jsonrpc-unregister-request))
+                 (with-current-buffer buffer-context
+                   (codeql--query-server-jsonrpc-unregister-request))
                  (message "Error %s: %s\n%s\n" code message data)))
              :deferred :evaluation/runQueries)
           (codeql--query-server-jsonrpc-register-request
-           id
-           (codeql--query-server-current-or-error)
+           id (codeql--query-server-current-or-error)
            :evaluation/runQueries))))
 
      ;; query-server2
@@ -2739,28 +2763,29 @@ Our implementation simply returns the thing at point as a candidate."
                           (end-col (save-excursion (goto-char max) (codeql--lsp-abiding-column))))
                       `(:quickEval
                         (:quickEvalPos
-                         (:fileName ,(codeql--tramp-unwrap query-path)
-                                    :line ,start-line
-                                    :column ,start-col
-                                    :endLine ,end-line
-                                    :endColumn ,end-col)))))
+                         (;; align
+                          :fileName ,(codeql--tramp-unwrap query-path)
+                          :line ,start-line
+                          :column ,start-col
+                          :endLine ,end-line
+                          :endColumn ,end-col)))))
                 ;; any non-null value will trigger a full query run
                 `(:query (:xx ""))))
              (run-query-params
               `(:body
-                (:db ,(codeql--file-truename codeql--active-database)
-                     :additionalPacks ,library-path
-                     :externalInputs ()
-                     :singletonExternalInputs ,(or template-values '())
-                     :outputPath ,(codeql--tramp-unwrap bqrs-path)
-                     :queryPath ,(codeql--tramp-unwrap query-path)
-                     ;; do we want Datalog Intermediary Language dumps?
-                     ;; https://codeql.github.com/docs/codeql-overview/codeql-glossary/#dil
-                     ;;:dilPath: string
-                     ;;:logPath: string
-                     :target ,query-target)
+                (;; align
+                 :db ,(codeql--file-truename codeql--active-database)
+                 :additionalPacks ,library-path
+                 :externalInputs ()
+                 :singletonExternalInputs ,(or template-values '())
+                 :outputPath ,(codeql--tramp-unwrap bqrs-path)
+                 :queryPath ,(codeql--tramp-unwrap query-path)
+                 ;; do we want Datalog Intermediary Language dumps?
+                 ;; https://codeql.github.com/docs/codeql-overview/codeql-glossary/#dil
+                 ;;:dilPath: string
+                 ;;:logPath: string
+                 :target ,query-target)
                 :progressId ,(codeql--query-server-next-progress-id))))
-
         (message "Running query ...")
         (cl-multiple-value-bind (id timer)
             (codeql--jsonrpc-async-request
@@ -2776,7 +2801,8 @@ Our implementation simply returns the thing at point as a candidate."
                    (quick-eval quick-eval)
                    (src-filename src-filename)
                    (src-root codeql--database-source-archive-root))
-               (jsonrpc-lambda (&rest params)
+               (jsonrpc-lambda
+                   (&rest params)
                  (with-current-buffer buffer-context
                    (codeql--query-server-jsonrpc-unregister-request))
                  (let ((errors (codeql--query-server2-handle-message params)))
@@ -2801,14 +2827,15 @@ Our implementation simply returns the thing at point as a candidate."
                                           (file-name-nondirectory query-path)
                                           (if quick-eval "quick-eval" "full-query")
                                           (codeql-query-server-active-database))
-                                  `(:quick-eval ,quick-eval
-                                                :query-path ,query-path
-                                                :bqrs-path ,bqrs-path
-                                                :db-path ,db-path
-                                                :timestamp ,timestamp
-                                                :name ,name
-                                                :kind ,kind
-                                                :id ,id)
+                                  `(;; align
+                                    :quick-eval ,quick-eval
+                                    :query-path ,query-path
+                                    :bqrs-path ,bqrs-path
+                                    :db-path ,db-path
+                                    :timestamp ,timestamp
+                                    :name ,name
+                                    :kind ,kind
+                                    :id ,id)
                                   codeql--completed-query-history)))
                              ;; display results
                              (codeql-load-bqrs
@@ -2818,6 +2845,7 @@ Our implementation simply returns the thing at point as a candidate."
                               name
                               kind
                               id
+                              buffer-context
                               src-filename
                               codeql--database-source-archive-root
                               src-buffer))))
@@ -2830,28 +2858,26 @@ Our implementation simply returns the thing at point as a candidate."
                  (message "Error %s: %s\n%s\n" code message data)))
              :deferred :evaluation/runQuery)
           (codeql--query-server-jsonrpc-register-request
-           id
-           (codeql--query-server-current-or-error)
+           id (codeql--query-server-current-or-error)
            :evaluation/runQuery)))))))
 
-(defun codeql--query-server-request-compile-and-run
-    (buffer-context
-     library-path
-     qlo-path
-     bqrs-path
-     query-path
-     query-info
-     db-path
-     db-scheme
-     quick-eval
-     &optional template-values src-filename src-buffer)
+(defun codeql--query-server-request-compile-and-run (buffer-context
+                                                     library-path
+                                                     qlo-path
+                                                     bqrs-path
+                                                     query-path
+                                                     query-info
+                                                     db-path
+                                                     db-scheme
+                                                     quick-eval
+                                                     &optional
+                                                     template-values
+                                                     src-filename
+                                                     src-buffer)
   "Request query compilation from the query server."
-
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-
   (with-current-buffer buffer-context
     (let*
-        ;; XXX: dedupe when query-server2 is working
         ((query-target
           (if quick-eval
               ;; set a quick eval position if need be, otherwise run the entire query
@@ -2863,34 +2889,36 @@ Our implementation simply returns the thing at point as a candidate."
                       (end-col (save-excursion (goto-char max) (codeql--lsp-abiding-column))))
                   `(:quickEval
                     (:quickEvalPos
-                     (:fileName ,(codeql--tramp-unwrap query-path)
-                                :line ,start-line
-                                :column ,start-col
-                                :endLine ,end-line
-                                :endColumn ,end-col)))))
+                     (;; align
+                      :fileName ,(codeql--tramp-unwrap query-path)
+                      :line ,start-line
+                      :column ,start-col
+                      :endLine ,end-line
+                      :endColumn ,end-col)))))
             ;; any non-null value will trigger a full query run
             `(:query (:xx ""))))
          (compile-query-params
           `(:body
             (:compilationOptions
-             (:computeNoLocationUrls t
-                                     :failOnWarnings :json-false
-                                     :fastCompilation :json-false
-                                     :includeDilInQlo t
-                                     :localChecking :json-false
-                                     :noComputeGetUrl :json-false
-                                     :noComputeToString :json-false
-                                     :computeDefaultStrings t)
+             (;; align
+              :computeNoLocationUrls t
+              :failOnWarnings :json-false
+              :fastCompilation :json-false
+              :includeDilInQlo t
+              :localChecking :json-false
+              :noComputeGetUrl :json-false
+              :noComputeToString :json-false
+              :computeDefaultStrings t)
              :extraOptions
              (:timeoutSecs 0)
              :queryToCheck
-             (:libraryPath ,library-path
-                           :dbschemePath ,db-scheme
-                           :queryPath ,(codeql--tramp-unwrap query-path))
+             (;; align
+              :libraryPath ,library-path
+              :dbschemePath ,db-scheme
+              :queryPath ,(codeql--tramp-unwrap query-path))
              :resultPath ,(codeql--tramp-unwrap qlo-path)
              :target ,query-target)
             :progressId ,(codeql--query-server-next-progress-id))))
-
       (cond
        ;; legacy query-server
        ((string= codeql-query-server "query-server")
@@ -2911,59 +2939,71 @@ Our implementation simply returns the thing at point as a candidate."
                    (quick-eval quick-eval)
                    (template-values template-values)
                    (src-filename src-filename))
-               (jsonrpc-lambda (&key messages &allow-other-keys)
-                 (with-current-buffer buffer-context
-                   (codeql--query-server-jsonrpc-unregister-request))
-                 (message "Compilation completed, checking results.")
-                 (let ((abort-run-query nil))
-                   (seq-map (lambda (m)
-                              (cl-destructuring-bind (&key severity message &allow-other-keys)
-                                  m
-                                (message "[compilation/compileQuery] severity %s: %s" severity message)
-                                (when (eql severity 0)
-                                  (message "[compilation/compileQuery] Aborting query! severity 0: %s" message)
-                                  (setq abort-run-query t)))) messages)
-                   (unless abort-run-query
-                     ;; note: this is a nested jsonrpc request, maintain buffer-local context
-                     (codeql--query-server-request-run buffer-context qlo-path
-                                                       bqrs-path query-path
-                                                       query-info
-                                                       library-path
-                                                       db-path
-                                                       quick-eval
-                                                       template-values
-                                                       src-filename
-                                                       src-buffer)))))
+               (jsonrpc-lambda
+                (&key messages &allow-other-keys)
+                (with-current-buffer buffer-context
+                  (codeql--query-server-jsonrpc-unregister-request))
+                (message "Compilation completed, checking results.")
+                (let ((abort-run-query nil))
+                  (seq-map
+                   (lambda (m)
+                     (cl-destructuring-bind
+                         (&key severity message &allow-other-keys) m
+                       (message "[compilation/compileQuery] severity %s: %s" severity message)
+                       (when (eql severity 0)
+                         (message "[compilation/compileQuery] Aborting query! severity 0: %s" message)
+                         (setq abort-run-query t))))
+                   messages)
+                  (unless abort-run-query
+                    ;; note: this is a nested jsonrpc request, maintain buffer-local context
+                    (codeql--query-server-request-run
+                     buffer-context qlo-path
+                     bqrs-path query-path
+                     query-info
+                     library-path
+                     db-path
+                     quick-eval
+                     template-values
+                     src-filename
+                     src-buffer)))))
              :error-fn
              (let ((buffer-context buffer-context))
-               (jsonrpc-lambda (&key code message data &allow-other-keys)
-                 (with-current-buffer buffer-context
-                   (codeql--query-server-jsonrpc-unregister-request))
-                 (message "Error %s: %s\n%s\n" code message data)))
+               (jsonrpc-lambda
+                (&key code message data &allow-other-keys)
+                (with-current-buffer buffer-context
+                  (codeql--query-server-jsonrpc-unregister-request))
+                (message "Error %s: %s\n%s\n" code message data)))
              :deferred :compilation/compileQuery)
           ;; register this request so we can cancel it if need be
           (codeql--query-server-jsonrpc-register-request
-           id
-           (codeql--query-server-current-or-error)
+           id (codeql--query-server-current-or-error)
            :compilation/compileQuery)))
 
        ;; query-server2, compilation is part of the runQuery request
        ((string= codeql-query-server "query-server2")
-        (codeql--query-server-request-run buffer-context qlo-path
-                                          bqrs-path query-path
-                                          query-info
-                                          library-path
-                                          db-path
-                                          quick-eval
-                                          template-values
-                                          src-filename
-                                          src-buffer))))))
+        (codeql--query-server-request-run
+         buffer-context
+         qlo-path
+         bqrs-path
+         query-path
+         query-info
+         library-path
+         db-path
+         quick-eval
+         template-values
+         src-filename
+         src-buffer))))))
 
-(defun codeql--query-server-run-query-from-path (query-path quick-eval &optional template-values src-filename src-buffer)
+(defun codeql--query-server-run-query-from-path (query-path
+                                                 quick-eval
+                                                 &optional
+                                                 template-values
+                                                 src-filename
+                                                 src-buffer)
+  "Run the query at QUERY-PATH."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (cl-assert codeql--active-database t)
   (cl-assert (codeql--resolve-query-paths query-path) t)
-
   (let* ((qlo-path
           (let ((temporary-file-directory (codeql--tramp-wrap codeql-tmp-dir)))
             (make-temp-file "qlo" nil ".qlo")))
@@ -2974,45 +3014,36 @@ Our implementation simply returns the thing at point as a candidate."
          (db-scheme codeql--dbscheme)
          (db-path (directory-file-name codeql--active-database))
          (query-info (codeql--query-info query-path)))
-
     ;; request a query compilation, its success callback will then request a query run
-    (codeql--query-server-request-compile-and-run (current-buffer)
-                                                  library-path
-                                                  qlo-path
-                                                  bqrs-path
-                                                  query-path
-                                                  query-info
-                                                  db-path
-                                                  db-scheme
-                                                  quick-eval
-                                                  template-values
-                                                  src-filename
-                                                  src-buffer)))
+    (codeql--query-server-request-compile-and-run
+     (current-buffer)
+     library-path
+     qlo-path
+     bqrs-path
+     query-path
+     query-info
+     db-path
+     db-scheme
+     quick-eval
+     template-values
+     src-filename
+     src-buffer)))
 
 (defun codeql-query-server-run-query ()
-  "Run a query or quick eval a query region.
-
-Note: to quick eval a predicate, you have to select just the predicate name:
-
-https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-projects/#running-a-specific-part-of-a-query-or-library
-"
+  "Run a query or quick eval a query region."
   (interactive)
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-
   ;; init the query history if need be
   (unless codeql--completed-query-history
     (setq codeql--completed-query-history (make-hash-table :test #'equal)))
-
   (if codeql--query-server
       (let* ((query-path (buffer-file-name))
              (quick-eval (if (use-region-p) t nil)))
-
         ;; make sure we save the query before running it
         (when (or codeql--run-query-always-save
                   (and (buffer-modified-p)
                        (y-or-n-p "Query was not saved prior to evaluation, save now?")))
           (save-buffer))
-
         (codeql--query-server-run-query-from-path query-path quick-eval))
     (message "No query server started.")))
 
@@ -3025,20 +3056,28 @@ https://codeql.github.com/docs/codeql-for-visual-studio-code/analyzing-your-proj
              (query (completing-read "Query History: " (reverse (append query-keys nil)) nil t)))
         (when query
           (let ((query-data (gethash query codeql--completed-query-history)))
-            (cl-destructuring-bind (&key
-                                    query-path
-                                    bqrs-path
-                                    timestamp
-                                    db-path
-                                    name kind
-                                    id &allow-other-keys)
+            (cl-destructuring-bind
+                (&key
+                 query-path
+                 bqrs-path
+                 timestamp
+                 db-path
+                 name kind
+                 id &allow-other-keys)
                 query-data
               (let ((org-results (format "%s.org" bqrs-path)))
                 ;; since we render results in a flat text format
                 ;; we store it to disk on first render
                 (if (file-exists-p org-results)
                     (find-file org-results)
-                  (codeql-load-bqrs bqrs-path query-path db-path name kind id)))))))
+                  (codeql-load-bqrs
+                   bqrs-path
+                   query-path
+                   db-path
+                   name
+                   kind
+                   id
+                   (current-buffer))))))))
     ;; XXX: do we want to serialize query history state to disk?
     (message "No query history available yet in this session.")))
 
