@@ -763,11 +763,6 @@ Provides backwards references into the AST buffer from the source file.")
 (defun codeql--reset-database-state ()
   "Clear out all the buffer-local database state."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode))
-  ;; (when codeql--database-source-archive-root
-  ;;   ;; (codeql--database-unmount-source-archive-zip
-  ;;   ;;  codeql--database-source-archive-root)
-  ;;   (remhash (codeql--tramp-wrap codeql--database-source-archive-root)
-  ;;            codeql--active-source-roots-with-buffers))
   (setq codeql--active-database nil)
   (setq codeql--active-database-language nil)
   (setq codeql--database-dataset-folder nil)
@@ -1067,10 +1062,6 @@ side effects."
   (unless codeql--registered-database-history
     (setq codeql--registered-database-history (make-hash-table :test #'equal)))
 
-  ;; ;; init active source roots map if need be
-  ;; (unless codeql--active-source-roots-with-buffers
-  ;;   (setq codeql--active-source-roots-with-buffers (make-hash-table :test #'equal)))
-
   ;; resolve and set the dataset folder, we need this when running queries
   (let* ((database-info (codeql--database-info database-path))
          (database-language (json-pointer-get database-info "/languages/0"))
@@ -1096,7 +1087,6 @@ side effects."
 
     (message "Registering: %s" database-dataset-folder)
 
-    ;; XXX: dedupe code when everything is working
     (cond
      ;; legacy query-server
      ((string= codeql-query-server "query-server")
@@ -1121,8 +1111,6 @@ side effects."
            (with-current-buffer buffer
              ;; global addition can be asynchronous, so we do that on success only
              (codeql--active-datasets-add database-dataset-folder (current-buffer))
-             ;; associate the source root with the query buffer globally for xref support
-             ;;(puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
              ;; save in database selection history
              (puthash database-path database-path codeql--registered-database-history)
              ;; these variables are buffer-local to ql-tree-sitter-mode
@@ -1141,6 +1129,7 @@ side effects."
          (message "Error %s: %s\n%s\n" code message data))
        ;; synchronize to only register when deregister has completed in global state
        :deferred :evaluation/registerDatabases))
+
      ;; query-server2
      ((string= codeql-query-server "query-server2")
       (jsonrpc-async-request
@@ -1166,8 +1155,6 @@ side effects."
            (with-current-buffer buffer
              ;; global addition can be asynchronous, so we do that on success only
              (codeql--active-datasets-add database-dataset-folder (current-buffer))
-             ;; associate the source root with the query buffer globally for xref support
-             ;;(puthash (codeql--tramp-wrap source-archive-root) (current-buffer) codeql--active-source-roots-with-buffers)
              ;; save in database selection history
              (puthash database-path database-path codeql--registered-database-history)
              ;; these variables are buffer-local to ql-tree-sitter-mode
@@ -1975,23 +1962,7 @@ a codeql database source archive."
                 (codeql--run-templated-query language "localReferences" src-filename src-buffer))))
           ;; we want our bindings available
           (codeql--set-local-xref-bindings)
-          'codeql)
-
-        ;; (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-        ;;          with src-filename = (buffer-file-name)
-        ;;          with src-buffer = (current-buffer)
-        ;;          when (string-match (regexp-quote source-root) src-filename) do
-        ;;          ;; hail to the guardians of the watch towers of the east
-        ;;          (message "Cooking up CodeQL xrefs for %s, please hold." (file-name-nondirectory src-filename))
-        ;;          (with-current-buffer (gethash source-root codeql--active-source-roots-with-buffers)
-        ;;            (let ((language (intern (format ":%s" codeql--active-database-language))))
-        ;;              (codeql--run-templated-query language "localDefinitions" src-filename src-buffer)
-        ;;              (codeql--run-templated-query language "localReferences" src-filename src-buffer)))
-        ;;          ;; we want our bindings available
-        ;;          (codeql--set-local-xref-bindings)
-        ;;          (cl-return 'codeql))
-
-        ))))
+          'codeql)))))
 
 (cl-defmethod xref-backend-identifier-at-point ((_backend (eql codeql)))
   "Return the thing at point."
@@ -2126,10 +2097,12 @@ Our implementation simply returns the thing at point as a candidate."
   (cl-multiple-value-bind (filename line-column) (split-string filename "::")
     (cl-multiple-value-bind (line column) (split-string line-column ":")
 
-      ;; TODO FIXME
       ;; XXX: hrmmm ... we probably want to force unique file visits
       ;; XXX: since we don't want to use a cross-query state when there
       ;; XXX: concurrent query buffers operating on the same database
+      ;; XXX: although this re-associates to the correct query buffer
+      ;; XXX: pending which results are being navigated, so this is
+      ;; XXX: probably ok in practice
 
       (when-let ((query-buffer codeql--org-query-buffer)
                  (src-buffer (codeql--find-file-other-window filename)))
@@ -2263,28 +2236,11 @@ Our implementation simply returns the thing at point as a candidate."
       (let ((sorted-tree (codeql--sort-tree roots)))
         (message "Tree is sorted (%d roots) ... rendering." (length sorted-tree))
         ;; render with buffer context ...
-
         (with-current-buffer src-buffer
           (if (buffer-live-p codeql--org-query-buffer)
               (codeql--ast-to-org sorted-tree src-filename src-buffer codeql--org-query-buffer)
             (message "No active buffer context available to render AST with, going to plaintext.")
-            (codeql--ast-to-org sorted-tree src-filename src-buffer)))
-
-        ;; (cl-loop for active-source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-        ;;          with filename = (codeql--tramp-wrap (format "%s%s" src-root src-filename))
-        ;;          when (string-match-p (regexp-quote active-source-root) filename) do
-        ;;          (message "Active buffer context available to render AST for %s" filename)
-        ;;          ;; hail to the guardians of the watch towers of the north.
-        ;;          (let ((buffer-context (gethash active-source-root codeql--active-source-roots-with-buffers)))
-        ;;            (codeql--ast-to-org sorted-tree src-filename src-buffer buffer-context))
-        ;;          ;; donezo.
-        ;;          (cl-return)
-        ;;          ;; fall back to plaintext rendering
-        ;;          finally
-        ;;          (message "No active buffer context available to render AST with, going to plaintext.")
-        ;;          (codeql--ast-to-org sorted-tree src-filename src-buffer))
-
-        ))))
+            (codeql--ast-to-org sorted-tree src-filename src-buffer)))))))
 
 (defun codeql--ast-to-org (sorted-tree src-filename src-buffer &optional buffer-context)
   ;; src-filename is (buffer-filename) for the src buffer ... XXX: check with TRAMP
@@ -2311,61 +2267,62 @@ Our implementation simply returns the thing at point as a candidate."
 (defun codeql--render-node (node level &optional buffer-context)
   (insert
    (concat
-    (format "%s %s" level
-            (if-let* ((result-node
-                       ;; if these things hold, we want to resolve the org link
-                       (and buffer-context
-                            (codeql--ast-item-result-node node)))
-                      ;; line == 0 means no location available
-                      (line (and (> (codeql--result-node-line result-node) 0)
-                                 (codeql--result-node-line result-node))))
-                (progn
-                  ;; init ast reference cache if need be
-                  (let* ((src-filename (codeql--result-node-filename result-node))
-                         ;; XXX: double check under TRAMP
-                         (full-src-path
-                          (with-current-buffer buffer-context
-                            (format (codeql--tramp-wrap
-                                     (format "%s%s"
-                                             codeql--database-source-archive-root
-                                             src-filename))))))
-                    (unless (gethash full-src-path codeql--ast-backwards-definitions)
-                      (puthash full-src-path [] codeql--ast-backwards-definitions)))
-                  ;; there's backwards messages in this stuff
-                  (let* ((src-filename (codeql--result-node-filename result-node))
-                         (full-src-path
-                          (with-current-buffer buffer-context
-                            (format (codeql--tramp-wrap
-                                     (format "%s%s"
-                                             codeql--database-source-archive-root
-                                             src-filename)))))
-                         (ast-line (line-number-at-pos))
-                         (ast-lookup-vector (gethash full-src-path codeql--ast-backwards-definitions))
-                         (entity-url (codeql--result-node-url result-node))
-                         (src-start-line (json-pointer-get entity-url "/startLine"))
-                         (src-end-line (or (json-pointer-get entity-url "/endLine") src-start-line))
-                         (src-start-column (or (json-pointer-get entity-url "/startColumn") 1))
-                         (src-end-column (json-pointer-get entity-url "/endColumn")))
-                    ;; make all the info we need to build an AST definition available from our xref backend
-                    (puthash full-src-path
-                             (vconcat `[,(vector
-                                          src-start-line
-                                          src-end-line
-                                          src-start-column
-                                          src-end-column
-                                          ast-line)]
-                                      ast-lookup-vector)
-                             codeql--ast-backwards-definitions))
-                  ;; go into the active query buffer context and resolve from database
-                  (save-excursion
-                    (with-current-buffer buffer-context
-                      (format "%s %s%s"
-                              (codeql--ast-item-label node)
-                              (codeql--result-node-to-org result-node "⧉")
-                              ;; only add Line stamp to roots
-                              (if (codeql--ast-item-parent node) "" (format " Line %s" line))))))
-              ;; if not, just return a plain text heading
-              (codeql--ast-item-label node))) "\n"))
+    (format
+     "%s %s" level
+     (if-let* ((result-node
+                ;; if these things hold, we want to resolve the org link
+                (and buffer-context
+                     (codeql--ast-item-result-node node)))
+               ;; line == 0 means no location available
+               (line (and (> (codeql--result-node-line result-node) 0)
+                          (codeql--result-node-line result-node))))
+         (progn
+           ;; init ast reference cache if need be
+           (let* ((src-filename (codeql--result-node-filename result-node))
+                  ;; XXX: double check under TRAMP
+                  (full-src-path
+                   (with-current-buffer buffer-context
+                     (format (codeql--tramp-wrap
+                              (format "%s%s"
+                                      codeql--database-source-archive-root
+                                      src-filename))))))
+             (unless (gethash full-src-path codeql--ast-backwards-definitions)
+               (puthash full-src-path [] codeql--ast-backwards-definitions)))
+           ;; there's backwards messages in this stuff
+           (let* ((src-filename (codeql--result-node-filename result-node))
+                  (full-src-path
+                   (with-current-buffer buffer-context
+                     (format (codeql--tramp-wrap
+                              (format "%s%s"
+                                      codeql--database-source-archive-root
+                                      src-filename)))))
+                  (ast-line (line-number-at-pos))
+                  (ast-lookup-vector (gethash full-src-path codeql--ast-backwards-definitions))
+                  (entity-url (codeql--result-node-url result-node))
+                  (src-start-line (json-pointer-get entity-url "/startLine"))
+                  (src-end-line (or (json-pointer-get entity-url "/endLine") src-start-line))
+                  (src-start-column (or (json-pointer-get entity-url "/startColumn") 1))
+                  (src-end-column (json-pointer-get entity-url "/endColumn")))
+             ;; make all the info we need to build an AST definition available from our xref backend
+             (puthash full-src-path
+                      (vconcat `[,(vector
+                                   src-start-line
+                                   src-end-line
+                                   src-start-column
+                                   src-end-column
+                                   ast-line)]
+                               ast-lookup-vector)
+                      codeql--ast-backwards-definitions))
+           ;; go into the active query buffer context and resolve from database
+           (save-excursion
+             (with-current-buffer buffer-context
+               (format "%s %s%s"
+                       (codeql--ast-item-label node)
+                       (codeql--result-node-to-org result-node "⧉")
+                       ;; only add Line stamp to roots
+                       (if (codeql--ast-item-parent node) "" (format " Line %s" line))))))
+       ;; if not, just return a plain text heading
+       (codeql--ast-item-label node))) "\n"))
   ;; hail to the guardians of the watch towers of the south.
   (cl-loop for node across (codeql--ast-item-children node) do
            (codeql--render-node node (concat level "*") buffer-context)))
@@ -2400,7 +2357,6 @@ Our implementation simply returns the thing at point as a candidate."
     (if json
         ;; render the AST from cache
         (codeql--render-ast json src-root (buffer-file-name) (current-buffer))
-
       ;; need to build an AST
       (if (buffer-live-p codeql--org-query-buffer)
           (let ((src-filename (buffer-file-name))
@@ -2409,26 +2365,7 @@ Our implementation simply returns the thing at point as a candidate."
               (message "Cooking up AST for %s, please hold." (file-name-nondirectory src-filename))
               (let ((language (intern (format ":%s" codeql--active-database-language))))
                 (codeql--run-templated-query language "printAst" src-filename src-buffer))))
-
-        (message "Did not recognize this file as being part of an active codeql database."))
-
-      ;; (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
-      ;;          with src-filename = (buffer-file-name)
-      ;;          with src-buffer = (current-buffer)
-      ;;          when (string-match-p (regexp-quote source-root) src-filename) do
-      ;;          (message "Cooking up AST for %s, please hold." (file-name-nondirectory src-filename))
-      ;;          (let ((query-buffer
-      ;;                 (gethash source-root codeql--active-source-roots-with-buffers)))
-      ;;            (with-current-buffer query-buffer
-      ;;              (let ((language (intern (format ":%s" codeql--active-database-language))))
-      ;;                (codeql--run-templated-query language "printAst" src-filename src-buffer))))
-      ;;          ;; exit loop on success
-      ;;          (cl-return)
-      ;;          ;; if we reach here, we did not find an active database query server to use
-      ;;          finally
-      ;;          (message "Did not recognize this file as being part of an active codeql database."))
-
-      )))
+        (message "Did not recognize this file as being part of an active codeql database.")))))
 
 (defun codeql--process-ast (json src-filename src-root src-buffer)
   ;; only allow this to be called as part of a templated flow
