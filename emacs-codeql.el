@@ -1481,7 +1481,7 @@ Sets an optional HEADER."
       ;; return final org data
       (buffer-string))))
 
-(defun codeql--org-render-sarif-results (org-data &optional footer marker)
+(defun codeql--org-render-sarif-results (org-data query-buffer &optional footer marker)
   "Render ORG-DATA including an optional FOOTER."
   ;; sarif results are org trees
   (let ((buffer
@@ -1496,11 +1496,12 @@ Sets an optional HEADER."
         (insert footer))
       (goto-char (point-min))
       (setq buffer-read-only t)
+      (setq codeql--org-query-buffer query-buffer)
       (save-excursion
         (switch-to-buffer-other-window buffer))
       (buffer-string))))
 
-(defun codeql--org-render-raw-query-results (org-data &optional footer marker)
+(defun codeql--org-render-raw-query-results (org-data query-buffer &optional footer marker)
   "Render ORG-DATA including an optional FOOTER."
   ;; raw results are org tables
   (let ((buffer
@@ -1518,6 +1519,7 @@ Sets an optional HEADER."
         (insert footer))
       (goto-char (point-min))
       (setq buffer-read-only t)
+      (setq codeql--org-query-buffer query-buffer)
       (save-excursion
         (switch-to-buffer-other-window buffer))
       (buffer-string))))
@@ -1965,7 +1967,8 @@ a codeql database source archive."
             'codeql)
         ;; see if this file SHOULD have codeql refs and defs and the local bindings
         ;; XXX: this is not very performant, make this a faster lookup
-        (message "XXX1: %s" (hash-table-keys codeql--active-source-roots-with-buffers))
+        (when (buffer-live-p codeql--org-query-buffer)
+          (message "XXX: hot darn that worked!"))
         (cl-loop for source-root in (hash-table-keys codeql--active-source-roots-with-buffers)
                  with src-filename = (buffer-file-name)
                  with src-buffer = (current-buffer)
@@ -2089,6 +2092,8 @@ Our implementation simply returns the thing at point as a candidate."
 (add-to-list 'xref-backend-functions #'codeql-xref-backend)
 
 ;; custom org link so we can do voodoo when C-c C-o on a codeql: link
+(defvar-local codeql--org-query-buffer nil
+  "Share a buffer local copy of the query buffer in results buffers.")
 
 (defun codeql--find-file-other-window (filename &optional wildcards)
   (interactive
@@ -2110,8 +2115,10 @@ Our implementation simply returns the thing at point as a candidate."
 (defun codeql--org-open-file-link (filename)
   (cl-multiple-value-bind (filename line-column) (split-string filename "::")
     (cl-multiple-value-bind (line column) (split-string line-column ":")
-      (when-let ((src-buffer (codeql--find-file-other-window filename)))
+      (when-let ((query-buffer codeql--org-query-buffer)
+                 (src-buffer (codeql--find-file-other-window filename)))
         (with-current-buffer src-buffer
+          (setq codeql--org-query-buffer query-buffer)
           (widen)
           ;; codeql is 1 based, eglot calcs are 0 based, adjust accordingly
           (when (and column line)
@@ -2403,6 +2410,7 @@ Our implementation simply returns the thing at point as a candidate."
                          query-name
                          query-kind
                          query-id
+                         query-buffer
                          &optional
                          src-filename
                          src-root
@@ -2536,7 +2544,9 @@ Our implementation simply returns the thing at point as a candidate."
                (with-temp-buffer
                  (cl-loop for org-data in org-results do (insert org-data))
                  (let ((rendered
-                        (codeql--org-render-sarif-results (buffer-string) footer (file-name-nondirectory query-path))))
+                        (codeql--org-render-sarif-results
+                         (buffer-string) query-buffer
+                         footer (file-name-nondirectory query-path))))
                    ;; save off the fully rendered version for speedy re-loads
                    (with-temp-file (format "%s.org" bqrs-path)
                      (insert rendered))))
@@ -2604,7 +2614,7 @@ Our implementation simply returns the thing at point as a candidate."
               (when org-data
                 (let ((rendered
                        (codeql--org-render-raw-query-results
-                        org-data footer
+                        org-data query-buffer footer
                         (file-name-nondirectory query-path))))
                   (with-temp-file (format "%s.org" bqrs-path)
                     (insert rendered))))))))))))
@@ -2750,12 +2760,13 @@ Our implementation simply returns the thing at point as a candidate."
                               name
                               kind
                               id
+                              buffer-context
                               src-filename
                               codeql--database-source-archive-root
                               src-buffer))))
                      (message "No query results in %s!" bqrs-path)))))
              :error-fn
-             (let ((bufer-context buffer-context))
+             (let ((buffer-context buffer-context))
                (jsonrpc-lambda (&key code message data &allow-other-keys)
                  (with-current-buffer buffer-context
                    (codeql--query-server-jsonrpc-unregister-request))
@@ -2842,14 +2853,15 @@ Our implementation simply returns the thing at point as a candidate."
                                           (file-name-nondirectory query-path)
                                           (if quick-eval "quick-eval" "full-query")
                                           (codeql-query-server-active-database))
-                                  `(:quick-eval ,quick-eval
-                                                :query-path ,query-path
-                                                :bqrs-path ,bqrs-path
-                                                :db-path ,db-path
-                                                :timestamp ,timestamp
-                                                :name ,name
-                                                :kind ,kind
-                                                :id ,id)
+                                  `(;; align
+                                    :quick-eval ,quick-eval
+                                    :query-path ,query-path
+                                    :bqrs-path ,bqrs-path
+                                    :db-path ,db-path
+                                    :timestamp ,timestamp
+                                    :name ,name
+                                    :kind ,kind
+                                    :id ,id)
                                   codeql--completed-query-history)))
                              ;; display results
                              (codeql-load-bqrs
@@ -2859,6 +2871,7 @@ Our implementation simply returns the thing at point as a candidate."
                               name
                               kind
                               id
+                              buffer-context
                               src-filename
                               codeql--database-source-archive-root
                               src-buffer))))
@@ -3083,7 +3096,14 @@ Our implementation simply returns the thing at point as a candidate."
                 ;; we store it to disk on first render
                 (if (file-exists-p org-results)
                     (find-file org-results)
-                  (codeql-load-bqrs bqrs-path query-path db-path name kind id)))))))
+                  (codeql-load-bqrs
+                   bqrs-path
+                   query-path
+                   db-path
+                   name
+                   kind
+                   id
+                   (current-buffer))))))))
     ;; XXX: do we want to serialize query history state to disk?
     (message "No query history available yet in this session.")))
 
