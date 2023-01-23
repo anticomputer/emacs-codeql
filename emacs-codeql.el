@@ -2125,6 +2125,12 @@ Our implementation simply returns the thing at point as a candidate."
 (defun codeql--org-open-file-link (filename)
   (cl-multiple-value-bind (filename line-column) (split-string filename "::")
     (cl-multiple-value-bind (line column) (split-string line-column ":")
+
+      ;; TODO FIXME
+      ;; XXX: hrmmm ... we probably want to force unique file visits
+      ;; XXX: since we don't want to use a cross-query state when there
+      ;; XXX: concurrent query buffers operating on the same database
+
       (when-let ((query-buffer codeql--org-query-buffer)
                  (src-buffer (codeql--find-file-other-window filename)))
         (with-current-buffer src-buffer
