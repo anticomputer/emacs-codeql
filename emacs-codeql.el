@@ -995,48 +995,26 @@ side effects."
   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
   (message "archive-root: %s" (codeql--file-truename codeql--database-source-archive-root))
   (message "trusted-root: %s" (codeql--file-truename trusted-root))
-  (if (not (codeql--file-exists-p (codeql--file-truename codeql--database-source-archive-root)))
-      (when (string-match-p (format "^%s" (regexp-quote (codeql--file-truename trusted-root)))
-                            (codeql--file-truename codeql--database-source-archive-root))
-        ;; XXX: should probably check for traversal here as well eh?
-        (message "Source root verified to exist in trusted path ... extracting.")
-        (cond
-         ;; ;; I like to use https://github.com/google/mount-zip so selfishly check for it here
-         ;; ((executable-find "mount-zip" (file-remote-p default-directory))
-         ;;  (message "Mounting source archive with mount-zip.")
-         ;;  (when (codeql--shell-command-to-string
-         ;;         (format "%s -o nospecials -o nosymlinks -o nohardlinks %s %s"
-         ;;                 (executable-find "mount-zip" (file-remote-p default-directory))
-         ;;                 (codeql--file-truename codeql--database-source-archive-zip)
-         ;;                 (codeql--file-truename codeql--database-source-archive-root)))
-         ;;    (message "Mounted source archive with mount-zip.")))
-         ;; fall back to regular full extraction here
-         ((executable-find "unzip" (file-remote-p default-directory))
-          (message "Extracting source archive with unzip.")
-          (when (codeql--shell-command-to-string
-                 (format "%s %s -d %s"
-                         (executable-find "unzip" (file-remote-p default-directory))
-                         (codeql--file-truename codeql--database-source-archive-zip)
-                         (codeql--file-truename codeql--database-source-archive-root)))
-            (message "Extracted source archive with unzip.")))
-         (t (error "Could not process source archive."))))
-    (message "Source archive already processed.")
-    t))
-
-;; (defun codeql--database-unmount-source-archive-zip (source-zip-root)
-;;   "Unmount a src zip archive if it was mounted."
-;;   (cl-assert (eq major-mode 'ql-tree-sitter-mode) t)
-;;   (cl-assert source-zip-root t)
-;;   (when-let ((true-root (codeql--file-truename source-zip-root))
-;;              (umount (executable-find "umount" (file-remote-p default-directory)))
-;;              (mountpoint (executable-find "mountpoint" (file-remote-p default-directory)))
-;;              (mount-zip (executable-find "mount-zip" (file-remote-p default-directory))))
-;;     (message "archive-root: %s" true-root)
-;;     ;; we only need to do this if mount-zip is available, since that's the only time src will be mounted
-;;     (when (and (codeql--file-exists-p true-root)
-;;                (codeql--shell-command-to-string (format "%s %s" mountpoint true-root))
-;;                (codeql--shell-command-to-string (format "%s %s" umount true-root)))
-;;       (message "Umounted %s" true-root))))
+  (cond
+   ((>= emacs-major-version 27)
+    ;; >= emacs 27 we can just interact with the zip archive directly :)
+    (setq codeql--database-source-archive-root codeql--database-source-archive-zip))
+   ;; this is essentially moot, but keep the code around in case we ever need to fall back on it
+   ((not (codeql--file-exists-p (codeql--file-truename codeql--database-source-archive-root)))
+    (when (string-match-p (format "^%s" (regexp-quote (codeql--file-truename trusted-root)))
+                          (codeql--file-truename codeql--database-source-archive-root))
+      (message "Source root verified to exist in trusted path ... extracting.")
+      (cond
+       ((executable-find "unzip" (file-remote-p default-directory))
+        (message "Extracting source archive with unzip.")
+        (when (codeql--shell-command-to-string
+               (format "%s %s -d %s"
+                       (executable-find "unzip" (file-remote-p default-directory))
+                       (codeql--file-truename codeql--database-source-archive-zip)
+                       (codeql--file-truename codeql--database-source-archive-root)))
+          (message "Extracted source archive with unzip.")))
+       (t (error "Could not process source archive.")))))
+   t (message "Source archive already processed.")))
 
 ;;; jsonrpc interactions with the buffer-local query server
 
