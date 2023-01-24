@@ -996,10 +996,10 @@ side effects."
   (message "archive-root: %s" (codeql--file-truename codeql--database-source-archive-root))
   (message "trusted-root: %s" (codeql--file-truename trusted-root))
   (cond
-   ((>= emacs-major-version 27)
+   ((and (>= emacs-major-version 27) (eq system-type 'gnu/linux))
     ;; >= emacs 27 we can just interact with the zip archive directly :)
     (setq codeql--database-source-archive-root codeql--database-source-archive-zip))
-   ;; this is essentially moot, but keep the code around in case we ever need to fall back on it
+   ;; darwin does not support the zip archive via tramp
    ((not (codeql--file-exists-p (codeql--file-truename codeql--database-source-archive-root)))
     (when (string-match-p (format "^%s" (regexp-quote (codeql--file-truename trusted-root)))
                           (codeql--file-truename codeql--database-source-archive-root))
