@@ -96,15 +96,14 @@ Users of `straight.el` can use the below `use-package` declaration:
   (emacs-codeql :type git
 		:host github
 		:repo "anticomputer/emacs-codeql"
-		:branch "main")
+		:branch "main"
+        :files (:defaults "bin"))
   :after tree-sitter-langs
   :demand t
   :init
   (setq codeql-transient-binding "C-c q")
   (setq codeql-configure-eglot-lsp t))
 ```
-
-If you are using [`straight.el`](https://github.com/radian-software/straight.el), you will likely face an issue preparing the tree-sitter-lang artifact, as the path from which `emacs-codeql` copies the appropriate artifact to the `tree-sitter-langs--bin-dir` may not be correct. In this case, you can workaround this issue by manually copying `$HOME/.emacs.d/straight/repos/emacs-codeql//bin/{your-system-type}/{your-arch}/ql.*`to the directory that `tree-sitter-langs--bin-dir` points to.
 
 ### Getting Started with CodeQL
 
