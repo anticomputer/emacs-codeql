@@ -1014,7 +1014,7 @@ side effects."
                        (codeql--file-truename codeql--database-source-archive-root)))
           (message "Extracted source archive with unzip.")))
        (t (error "Could not process source archive.")))))
-   t (message "Source archive already processed.")))
+   (t (message "Source archive already processed."))))
 
 ;;; jsonrpc interactions with the buffer-local query server
 
