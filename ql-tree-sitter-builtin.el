@@ -183,10 +183,8 @@
      (no-node parent-bol 0)))
   "Tree-sitter indent rules for `ql-tree-sitter-mode'.")
 
-;;;###autoload
 (add-to-list 'auto-mode-alist '("\\.qll?\\'" . ql-tree-sitter-mode))
 
-;;;###autoload
 (define-derived-mode ql-tree-sitter-mode prog-mode "CodeQL"
   "Major mode for editing CodeQL files, powered by tree-sitter.
 \\{ql-tree-sitter-mode-map}"
