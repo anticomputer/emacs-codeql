@@ -189,7 +189,6 @@
 (defvar ql-tree-sitter-indent-offset 2
   "Indent offset for ql-tree-sitter-mode.")
 
-;;;###autoload
 (define-derived-mode ql-tree-sitter-mode prog-mode "CodeQL"
   "Major mode for editing CodeQL files.
 \\{ql-tree-sitter-mode-map}"
